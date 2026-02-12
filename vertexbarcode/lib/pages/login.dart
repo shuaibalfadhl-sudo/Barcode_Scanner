@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-// Ensure this import matches the filename where your ProductsScreen class is located
 import 'products.dart'; 
 
 void main() {
@@ -12,7 +11,6 @@ void main() {
   ));
 }
 
-// --- LOGIN PAGE ---
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
 
@@ -26,7 +24,38 @@ class _LoginPageState extends State<LoginPage> {
   
   bool _isLoading = false;
   bool _obscurePassword = true;
+  bool _rememberMe = false; // New state variable
   String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedCredentials();
+  }
+
+  // Load saved credentials from local storage
+  Future<void> _loadSavedCredentials() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _emailController.text = prefs.getString('remembered_email') ?? '';
+      _passwordController.text = prefs.getString('remembered_password') ?? '';
+      _rememberMe = prefs.getBool('remember_me') ?? false;
+    });
+  }
+
+  // Save or clear credentials based on the checkbox status
+  Future<void> _handleRememberMe() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (_rememberMe) {
+      await prefs.setString('remembered_email', _emailController.text.trim());
+      await prefs.setString('remembered_password', _passwordController.text.trim());
+      await prefs.setBool('remember_me', true);
+    } else {
+      await prefs.remove('remembered_email');
+      await prefs.remove('remembered_password');
+      await prefs.setBool('remember_me', false);
+    }
+  }
 
   Future<void> _handleLogin() async {
     final email = _emailController.text.trim();
@@ -34,7 +63,6 @@ class _LoginPageState extends State<LoginPage> {
 
     setState(() => _errorMessage = null);
 
-    // 1. Validation check
     if (email.isEmpty || password.isEmpty) {
       setState(() => _errorMessage = "Please fill in all fields.");
       return;
@@ -42,7 +70,6 @@ class _LoginPageState extends State<LoginPage> {
 
     final prefs = await SharedPreferences.getInstance();
     
-    // 2. Check email-specific lockout
     String? lockoutStr = prefs.getString('lockout_time_$email');
     if (lockoutStr != null) {
       final lockoutTime = DateTime.parse(lockoutStr);
@@ -60,13 +87,11 @@ class _LoginPageState extends State<LoginPage> {
     setState(() => _isLoading = true);
 
     try {
-      // Replace with your local IP or '10.0.2.2' for Android Emulator
       final response = await http.get(Uri.parse('http://192.168.0.143:8056/items/user'));
 
       if (response.statusCode == 200) {
         final List users = json.decode(response.body)['data'];
         
-        // 3. Match User in Database with Null-Safety Cast
         final user = users.cast<Map<String, dynamic>?>().firstWhere(
           (u) => u?['user_email'] == email,
           orElse: () => null,
@@ -75,19 +100,18 @@ class _LoginPageState extends State<LoginPage> {
         if (user == null) {
           setState(() => _errorMessage = "Account not found.");
         } else if (user['user_password'] == password) {
-          // Success! Clear failed attempts
+          // Success! 
+          await _handleRememberMe(); // Save credentials if checked
           await prefs.remove('failed_attempts_$email');
           await prefs.remove('lockout_time_$email');
           
           if (!mounted) return;
           
-          // 4. Redirect to ProductsScreen
           Navigator.pushReplacement(
             context, 
             MaterialPageRoute(builder: (context) => const ProductsScreen())
           );
         } else {
-          // 5. Handle Failure and Lockout logic
           int attempts = (prefs.getInt('failed_attempts_$email') ?? 0) + 1;
           await prefs.setInt('failed_attempts_$email', attempts);
 
@@ -113,7 +137,6 @@ class _LoginPageState extends State<LoginPage> {
     return Scaffold(
       body: Stack(
         children: [
-          // Background Gradient
           Container(
             decoration: const BoxDecoration(
               gradient: LinearGradient(
@@ -121,15 +144,6 @@ class _LoginPageState extends State<LoginPage> {
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
-            ),
-          ),
-          // Decorative Background Circle
-          Positioned(
-            top: -100,
-            right: -50,
-            child: CircleAvatar(
-              radius: 150,
-              backgroundColor: Colors.white.withOpacity(0.1),
             ),
           ),
           Center(
@@ -151,7 +165,6 @@ class _LoginPageState extends State<LoginPage> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Brand/Icon Header - CHANGED TO BARCODE
                     Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
@@ -162,25 +175,16 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                     const SizedBox(height: 20),
                     Text(
-                      "Products Barcoding ",
+                      "Products Barcoding",
                       style: TextStyle(
                         fontSize: 26,
                         fontWeight: FontWeight.bold,
                         color: Colors.blue.shade900,
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      "Enter your credentials to continue",
-                      style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
-                    ),
                     const SizedBox(height: 30),
-
-                    // Error Message with Animation
                     if (_errorMessage != null)
-                      AnimatedContainer(
-                        duration: const Duration(milliseconds: 300),
-                        width: double.infinity,
+                      Container(
                         padding: const EdgeInsets.all(12),
                         margin: const EdgeInsets.only(bottom: 20),
                         decoration: BoxDecoration(
@@ -188,21 +192,9 @@ class _LoginPageState extends State<LoginPage> {
                           borderRadius: BorderRadius.circular(15),
                           border: Border.all(color: Colors.red.shade200),
                         ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.error_outline, color: Colors.red, size: 20),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Text(
-                                _errorMessage!,
-                                style: const TextStyle(color: Colors.red, fontWeight: FontWeight.w600, fontSize: 13),
-                              ),
-                            ),
-                          ],
-                        ),
+                        child: Text(_errorMessage!, style: const TextStyle(color: Colors.red)),
                       ),
 
-                    // Email Input
                     _buildTextField(
                       controller: _emailController,
                       label: "Email Address",
@@ -210,8 +202,6 @@ class _LoginPageState extends State<LoginPage> {
                       type: TextInputType.emailAddress,
                     ),
                     const SizedBox(height: 20),
-
-                    // Password Input
                     _buildTextField(
                       controller: _passwordController,
                       label: "Password",
@@ -220,9 +210,22 @@ class _LoginPageState extends State<LoginPage> {
                       obscure: _obscurePassword,
                       onToggle: () => setState(() => _obscurePassword = !_obscurePassword),
                     ),
-                    const SizedBox(height: 35),
+                    
+                    // --- REMEMBER ME CHECKBOX ---
+                    Row(
+                      children: [
+                        Checkbox(
+                          value: _rememberMe,
+                          onChanged: (value) {
+                            setState(() => _rememberMe = value ?? false);
+                          },
+                          activeColor: Colors.blue.shade900,
+                        ),
+                        const Text("Remember Me", style: TextStyle(fontSize: 14)),
+                      ],
+                    ),
+                    const SizedBox(height: 15),
 
-                    // Login Button
                     SizedBox(
                       width: double.infinity,
                       height: 55,
@@ -231,24 +234,13 @@ class _LoginPageState extends State<LoginPage> {
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.blue.shade900,
                           foregroundColor: Colors.white,
-                          elevation: 4,
-                          shadowColor: Colors.blue.withOpacity(0.5),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
                         ),
                         child: _isLoading 
-                          ? const SizedBox(
-                              height: 24,
-                              width: 24,
-                              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                            )
-                          : const Text(
-                              'SIGN IN',
-                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, letterSpacing: 1.1),
-                            ),
+                          ? const CircularProgressIndicator(color: Colors.white)
+                          : const Text('SIGN IN', style: TextStyle(fontWeight: FontWeight.bold)),
                       ),
                     ),
-                    const SizedBox(height: 15),
-                    
                   ],
                 ),
               ),
@@ -259,7 +251,6 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
-  // Helper Widget for TextFields to keep the main build method clean
   Widget _buildTextField({
     required TextEditingController controller,
     required String label,
@@ -273,31 +264,18 @@ class _LoginPageState extends State<LoginPage> {
       controller: controller,
       obscureText: obscure,
       keyboardType: type,
-      style: const TextStyle(fontSize: 15),
       decoration: InputDecoration(
         labelText: label,
         prefixIcon: Icon(icon, color: Colors.blue.shade700),
         suffixIcon: isPassword 
           ? IconButton(
-              icon: Icon(obscure ? Icons.visibility : Icons.visibility_off, color: Colors.grey),
+              icon: Icon(obscure ? Icons.visibility : Icons.visibility_off),
               onPressed: onToggle,
             ) 
           : null,
         filled: true,
         fillColor: Colors.grey.shade50,
-        contentPadding: const EdgeInsets.symmetric(vertical: 18),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(15),
-          borderSide: BorderSide.none,
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(15),
-          borderSide: BorderSide(color: Colors.grey.shade200),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(15),
-          borderSide: BorderSide(color: Colors.blue.shade700, width: 1.5),
-        ),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
       ),
     );
   }
