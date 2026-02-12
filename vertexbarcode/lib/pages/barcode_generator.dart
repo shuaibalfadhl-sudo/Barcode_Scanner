@@ -1,7 +1,11 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:barcode_widget/barcode_widget.dart';
 import 'package:http/http.dart' as http;
+import 'package:screenshot/screenshot.dart';
+import 'package:printing/printing.dart';
+import 'package:pdf/widgets.dart' as pw;
 
 class BarcodeGeneratorScreen extends StatefulWidget {
   final Map<String, dynamic> product;
@@ -33,6 +37,7 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
   String _selectedDimUnit = '2'; // Default to CM (ID: 2)
   bool _isCbmChecked = false;
   bool _isSaving = false;
+  final ScreenshotController _screenshotController = ScreenshotController();
 
   // Mapping for UI Display - Added '0' as N/A
   final Map<String, String> _barcodeTypes = {
@@ -70,6 +75,13 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
     _weightController.text = (widget.product['product_weight'] ?? "")
         .toString();
 
+    // DEBUG: Log all product fields on init
+    print('\n🟠 [INIT] Product object loaded with fields:');
+    widget.product.forEach((key, value) {
+      print('  $key: $value');
+    });
+    print('🟠 [INIT] End of product fields\n');
+
     // 3. Set Barcode Type (prefer scanned detection, else product value)
     if (widget.scannedBarcodeTypeId != null) {
       _selectedBarcodeType = widget.scannedBarcodeTypeId.toString();
@@ -92,6 +104,17 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
       _widthController.text = (widget.product['cbm_width'] ?? "").toString();
       _heightController.text = (widget.product['cbm_height'] ?? "").toString();
     }
+    _valueController.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _valueController.dispose();
+    _weightController.dispose();
+    _lengthController.dispose();
+    _widthController.dispose();
+    _heightController.dispose();
+    super.dispose();
   }
 
   Future<Map<String, dynamic>?> _findDuplicate(String barcode) async {
@@ -155,6 +178,19 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
     }
 
     setState(() => _isSaving = true);
+
+    // DEBUG: Log entire product object FIRST
+    print('\n\n🔴==================== PRODUCT DEBUG ====================🔴');
+    print('Product object keys: ${widget.product.keys.toList()}');
+    print('Full product data:');
+    widget.product.forEach((key, value) {
+      print('  [$key]: $value (type: ${value.runtimeType})');
+    });
+    print('🔴==================================================🔴\n');
+
+    // DEBUG: Log the full product object
+    print('🟡 [SAVE] Product object keys: ${widget.product.keys.toList()}');
+    print('🟡 [SAVE] Full product: ${json.encode(widget.product)}');
 
     // Check for duplicate barcode on other products before saving
     try {
@@ -225,9 +261,32 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
       }
     } catch (e) {
       // ignore lookup errors and continue to attempt save
+      print('🟡 [SAVE] Duplicate check error (continuing anyway): $e');
     }
 
-    final id = widget.product['product_id'] ?? widget.product['id'];
+    final id =
+        widget.product['product_id'] ??
+        widget.product['id'] ??
+        widget.product['itemId'];
+
+    if (id == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("❌ Error: Product ID not found. Cannot save."),
+            backgroundColor: Colors.red,
+          ),
+        );
+        setState(() => _isSaving = false);
+      }
+      print(
+        '🔴 [SAVE] Product ID is NULL. Available keys: ${widget.product.keys.toList()}',
+      );
+      return;
+    }
+
+    print('🟡 [SAVE] Using product ID: $id');
+
     final url = Uri.parse('http://192.168.0.143:8056/items/products/$id');
 
     final Map<String, dynamic> body = {
@@ -250,14 +309,44 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
       });
     }
 
+    print('🔵 [REQUEST BUILD] Constructed request body:');
+    body.forEach((k, v) {
+      print('  $k: $v (type: ${v.runtimeType})');
+    });
+
     try {
+      print('🔵 [SAVE] ============================================');
+      print('🔵 [SAVE] PATCH URL: $url');
+      print('🔵 [SAVE] Barcode: ${_valueController.text.trim()}');
+      print('🔵 [SAVE] Barcode Type ID: ${_selectedBarcodeType}');
+      print('🔵 [SAVE] Weight: ${_weightController.text}');
+      print('🔵 [SAVE] Weight Unit: ${_selectedWeightUnit}');
+      print('🔵 [SAVE] Full Request Body: ${json.encode(body)}');
+      print('🔵 [SAVE] ============================================');
+
       final response = await http.patch(
         url,
         headers: {'Content-Type': 'application/json'},
         body: json.encode(body),
       );
 
-      if (response.statusCode == 200) {
+      print('🟢 [SAVE] Response status: ${response.statusCode}');
+      print('🟢 [SAVE] Response headers: ${response.headers}');
+      print('🟢 [SAVE] Response body length: ${response.body.length}');
+      print('🟢 [SAVE] Response body: ${response.body}');
+
+      // Try to parse response as JSON to see if there are any error messages
+      try {
+        final responseData = json.decode(response.body);
+        print('🟢 [SAVE] Parsed response JSON: $responseData');
+      } catch (e) {
+        print('🟡 [SAVE] Could not parse response as JSON: $e');
+      }
+
+      if (response.statusCode == 200 ||
+          response.statusCode == 201 ||
+          response.statusCode == 204) {
+        print('🟢 [SAVE] SUCCESS - Status code accepted');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -283,16 +372,100 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
             'is_rescan': isRescan,
             'is_regenerated': isRegenerated,
           });
+
+          // DEBUG: Fetch the product again after save to verify it was saved
+          print('🟡 [VERIFY] Fetching product again to verify save...');
+          try {
+            final verifyRes = await http.get(
+              Uri.parse('http://192.168.0.143:8056/items/products/$id'),
+            );
+            if (verifyRes.statusCode == 200) {
+              final verifyData = json.decode(verifyRes.body)['data'];
+              print('🟣 [VERIFY] Product after save:');
+              print('  barcode: ${verifyData['barcode']}');
+              print('  product_weight: ${verifyData['product_weight']}');
+              print('  barcode_type_id: ${verifyData['barcode_type_id']}');
+              print('  weight_unit_id: ${verifyData['weight_unit_id']}');
+              if (verifyData['cbm_length'] != null) {
+                print(
+                  '  CBM - L: ${verifyData['cbm_length']}, W: ${verifyData['cbm_width']}, H: ${verifyData['cbm_height']}',
+                );
+              }
+            }
+          } catch (e) {
+            print('🔴 [VERIFY] Could not verify: $e');
+          }
         }
       } else {
-        throw "Server error: ${response.statusCode}";
+        final errMsg =
+            "Server error: ${response.statusCode} - ${response.body}";
+        print('🔴 [SAVE] $errMsg');
+        throw errMsg;
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("❌ Error: $e"), backgroundColor: Colors.red),
-      );
+      print('🔴 [SAVE] Exception: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("❌ Error: $e"),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
     } finally {
       if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  Future<void> _printBarcode() async {
+    if (_valueController.text.isEmpty || _selectedBarcodeType == '0') return;
+    try {
+      final Uint8List? img = await _screenshotController.capture(
+        pixelRatio: 2.0,
+      );
+      if (img == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Unable to capture barcode image."),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      final pw.Document pdf = pw.Document();
+      final pw.ImageProvider image = pw.MemoryImage(img);
+
+      pdf.addPage(
+        pw.Page(
+          build: (pw.Context context) {
+            return pw.Center(child: pw.Image(image, width: 300));
+          },
+        ),
+      );
+
+      await Printing.layoutPdf(onLayout: (format) async => pdf.save());
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("✅ Print dialog opened!"),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      print('🔴 [PRINT] Exception: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Print error: $e"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -495,21 +668,24 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
                   if (_valueController.text.isNotEmpty &&
                       _selectedBarcodeType != '0' &&
                       _isFormValid)
-                    Container(
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        border: Border.all(color: Colors.grey.shade300),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: BarcodeWidget(
-                        barcode: _selectedBarcodeType == '1'
-                            ? Barcode.ean13()
-                            : Barcode.code128(),
-                        data: _valueController.text,
-                        width: 250,
-                        height: 80,
-                        drawText: true,
+                    Screenshot(
+                      controller: _screenshotController,
+                      child: Container(
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          border: Border.all(color: Colors.grey.shade300),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: BarcodeWidget(
+                          barcode: _selectedBarcodeType == '1'
+                              ? Barcode.ean13()
+                              : Barcode.code128(),
+                          data: _valueController.text,
+                          width: 250,
+                          height: 80,
+                          drawText: true,
+                        ),
                       ),
                     )
                   else
@@ -541,11 +717,20 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
             else
               Row(
                 children: [
+                  const SizedBox(width: 10),
                   Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(Icons.close),
-                      label: const Text("CANCEL"),
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.grey.shade800,
+                        foregroundColor: Colors.white,
+                      ),
+                      onPressed:
+                          (_valueController.text.isNotEmpty &&
+                              _selectedBarcodeType != '0')
+                          ? _printBarcode
+                          : null,
+                      icon: const Icon(Icons.print),
+                      label: const Text("PRINT"),
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -557,7 +742,7 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
                       ),
                       onPressed: _isFormValid ? _saveProduct : null,
                       icon: const Icon(Icons.save),
-                      label: const Text("SAVE TO DB"),
+                      label: const Text("SAVE"),
                     ),
                   ),
                 ],

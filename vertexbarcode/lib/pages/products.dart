@@ -240,6 +240,132 @@ class _ProductsScreenState extends State<ProductsScreen> {
               _detailRow("Length", "${getValue('cbm_length')} $cbmUnit"),
               _detailRow("Width", "${getValue('cbm_width')} $cbmUnit"),
               _detailRow("Height", "${getValue('cbm_height')} $cbmUnit"),
+              const Divider(height: 20),
+
+              // Show Latest History for this Product
+              const Text(
+                "Recent Updates",
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.blueGrey,
+                ),
+              ),
+              const SizedBox(height: 8),
+
+              // Get product name for history filtering
+              Builder(
+                builder: (_) {
+                  final String productName =
+                      product['product_name'] ?? 'Unknown';
+                  final List<Map<String, dynamic>> productHistory = recentScans
+                      .where((h) => h['product_name'] == productName)
+                      .toList()
+                      .take(3)
+                      .toList();
+
+                  if (productHistory.isEmpty) {
+                    return const Text(
+                      "No recent updates",
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    );
+                  }
+
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: productHistory.map((h) {
+                      final DateTime time = h['time'] is DateTime
+                          ? h['time']
+                          : DateTime.parse(h['time'].toString());
+                      final String timeStr = DateFormat(
+                        'MM/dd HH:mm',
+                      ).format(time);
+
+                      String tag = '';
+                      Color tagColor = Colors.blueGrey;
+                      if (h['is_scanned'] == true) {
+                        tag = 'SCANNED';
+                        tagColor = Colors.green;
+                      } else if (h['is_rescan'] == true) {
+                        tag = 'RESCAN';
+                        tagColor = Colors.orange;
+                      } else if (h['is_generated'] == true) {
+                        tag = 'GENERATE';
+                        tagColor = Colors.purple;
+                      } else if (h['is_regenerated'] == true) {
+                        tag = 'REGENERATED';
+                        tagColor = Colors.deepPurple;
+                      }
+
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.grey.shade300),
+                            borderRadius: BorderRadius.circular(8),
+                            color: Colors.grey.shade50,
+                          ),
+                          padding: const EdgeInsets.all(8),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      "Code: ${h['barcode'] ?? 'N/A'}",
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        fontFamily: 'monospace',
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: tagColor,
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text(
+                                      tag,
+                                      style: const TextStyle(
+                                        fontSize: 10,
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                timeStr,
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  );
+                },
+              ),
               if (!hasSku)
                 const Padding(
                   padding: EdgeInsets.only(top: 10),
@@ -509,13 +635,13 @@ class _ProductsScreenState extends State<ProductsScreen> {
               ),
               const SizedBox(height: 8),
               Align(
-                alignment: Alignment.centerLeft,
+                alignment: Alignment.centerRight,
                 child: TextButton(
                   onPressed: () => Navigator.pop(context),
                   child: const Text(
                     "CLOSE",
                     style: TextStyle(
-                      color: Colors.grey,
+                      color: Color.fromARGB(255, 235, 100, 100),
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -673,7 +799,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
                 onPressed: () => Navigator.pop(context, false),
                 child: const Text(
                   "CANCEL",
-                  style: TextStyle(color: Colors.grey),
+                  style: TextStyle(color: Color.fromARGB(255, 249, 88, 88)),
                 ),
               ),
               ElevatedButton(
@@ -1190,10 +1316,19 @@ class _ProductsScreenState extends State<ProductsScreen> {
                         onTap: () {
                           // Tap history to open details popup
                           Navigator.pop(context); // Close drawer
-                          _showProductDetails(
-                            item['original_data'],
-                            history: item,
+
+                          // Get fresh product data from allProducts list
+                          // instead of stale original_data in history
+                          final originalData =
+                              item['original_data'] as Map<String, dynamic>;
+                          final productId = _getProductId(originalData);
+
+                          final freshProduct = allProducts.firstWhere(
+                            (p) => _getProductId(p) == productId,
+                            orElse: () => originalData,
                           );
+
+                          _showProductDetails(freshProduct, history: item);
                         },
                       );
                     },
