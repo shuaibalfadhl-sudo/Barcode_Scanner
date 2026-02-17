@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
 import 'barcode.dart';
 import 'barcode_generator.dart';
+import 'print.dart';
 
 class ProductsScreen extends StatefulWidget {
   const ProductsScreen({super.key});
@@ -20,6 +21,8 @@ class _ProductsScreenState extends State<ProductsScreen> {
   List brands = [];
   List categories = [];
   List<Map<String, dynamic>> recentScans = [];
+  String? selectedSku;
+  List<String> skuList = [];
 
   // State Management
   bool isLoading = true;
@@ -149,16 +152,25 @@ class _ProductsScreenState extends State<ProductsScreen> {
         final query = searchQuery.toLowerCase();
         final name = (p['product_name'] ?? "").toString().toLowerCase();
         final pId = _getProductId(p).toString().toLowerCase();
-        final matchesSearch = name.contains(query) || pId.contains(query);
+        final skuValue = (p['product_code'] ?? "").toString();
+
+        final matchesSearch = name.contains(query) || pId.contains(query) || skuValue.toLowerCase().contains(query);
 
         final String pBrand = (p['product_brand'] ?? "").toString();
-        final bool matchesBrand =
-            selectedBrandId == null || pBrand == selectedBrandId;
+        final bool matchesBrand = selectedBrandId == null || pBrand == selectedBrandId;
+        
         final String pCategory = (p['product_category'] ?? "").toString();
-        final bool matchesCategory =
-            selectedCategoryId == null || pCategory == selectedCategoryId;
+        final bool matchesCategory = selectedCategoryId == null || pCategory == selectedCategoryId;
 
-        return matchesSearch && matchesBrand && matchesCategory;
+        // UPDATED SKU Filter check for "With SKU" or "No SKU"
+        bool matchesSku = true;
+        if (selectedSku == "With SKU") {
+          matchesSku = skuValue.trim().isNotEmpty && skuValue != "null";
+        } else if (selectedSku == "No SKU") {
+          matchesSku = skuValue.trim().isEmpty || skuValue == "null";
+        }
+
+        return matchesSearch && matchesBrand && matchesCategory && matchesSku;
       }).toList();
     });
   }
@@ -171,10 +183,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
   }) {
     String getValue(String key) {
       final val = product[key];
-      if (val == null ||
-          val.toString().trim().isEmpty ||
-          val.toString() == "null")
-        return "N/A";
+      if (val == null || val.toString().trim().isEmpty || val.toString() == "null") return "N/A";
       return val.toString();
     }
 
@@ -200,15 +209,6 @@ class _ProductsScreenState extends State<ProductsScreen> {
     final String weightUnit = getWeightUnit(product['weight_unit_id']);
     final String cbmUnit = getCbmUnit(product['cbm_unit_id']);
 
-    // If opened from a history item, determine source action for generator display
-    String? sourceAction;
-    if (history != null) {
-      if (history['is_scanned'] == true)
-        sourceAction = 'rescan';
-      else if (history['is_generated'] == true)
-        sourceAction = 'regenerate';
-    }
-
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -227,170 +227,34 @@ class _ProductsScreenState extends State<ProductsScreen> {
               _detailRow("Barcode", getValue('barcode')),
               _detailRow("BC Type", getBarcodeType(product['barcode_type_id'])),
               const Divider(),
-              _detailRow("Weight", "${getValue('product_weight')} $weightUnit"),
+              _detailRow("Weight", "${getValue('weight')} $weightUnit"),
               const SizedBox(height: 8),
               const Text(
                 "Dimensions (CBM)",
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.blueGrey,
-                ),
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blueGrey),
               ),
               _detailRow("Length", "${getValue('cbm_length')} $cbmUnit"),
               _detailRow("Width", "${getValue('cbm_width')} $cbmUnit"),
               _detailRow("Height", "${getValue('cbm_height')} $cbmUnit"),
-              const Divider(height: 20),
-
-              // Show Latest History for this Product
-              const Text(
-                "Recent Updates",
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.blueGrey,
-                ),
-              ),
-              const SizedBox(height: 8),
-
-              // Get product name for history filtering
-              Builder(
-                builder: (_) {
-                  final String productName =
-                      product['product_name'] ?? 'Unknown';
-                  final List<Map<String, dynamic>> productHistory = recentScans
-                      .where((h) => h['product_name'] == productName)
-                      .toList()
-                      .take(3)
-                      .toList();
-
-                  if (productHistory.isEmpty) {
-                    return const Text(
-                      "No recent updates",
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey,
-                        fontStyle: FontStyle.italic,
-                      ),
-                    );
-                  }
-
-                  return Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: productHistory.map((h) {
-                      final DateTime time = h['time'] is DateTime
-                          ? h['time']
-                          : DateTime.parse(h['time'].toString());
-                      final String timeStr = DateFormat(
-                        'MM/dd HH:mm',
-                      ).format(time);
-
-                      String tag = '';
-                      Color tagColor = Colors.blueGrey;
-                      if (h['is_scanned'] == true) {
-                        tag = 'SCANNED';
-                        tagColor = Colors.green;
-                      } else if (h['is_rescan'] == true) {
-                        tag = 'RESCAN';
-                        tagColor = Colors.orange;
-                      } else if (h['is_generated'] == true) {
-                        tag = 'GENERATE';
-                        tagColor = Colors.purple;
-                      } else if (h['is_regenerated'] == true) {
-                        tag = 'REGENERATED';
-                        tagColor = Colors.deepPurple;
-                      }
-
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.grey.shade300),
-                            borderRadius: BorderRadius.circular(8),
-                            color: Colors.grey.shade50,
-                          ),
-                          padding: const EdgeInsets.all(8),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Flexible(
-                                    child: Text(
-                                      "Code: ${h['barcode'] ?? 'N/A'}",
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        fontFamily: 'monospace',
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 6,
-                                      vertical: 2,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: tagColor,
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                    child: Text(
-                                      tag,
-                                      style: const TextStyle(
-                                        fontSize: 10,
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                timeStr,
-                                style: const TextStyle(
-                                  fontSize: 10,
-                                  color: Colors.grey,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                  );
-                },
-              ),
               if (!hasSku)
                 const Padding(
                   padding: EdgeInsets.only(top: 10),
                   child: Text(
                     "⚠️ Actions disabled: SKU is missing",
-                    style: TextStyle(
-                      color: Colors.red,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.bold),
                   ),
                 ),
             ],
           ),
         ),
-        actionsPadding: const EdgeInsets.symmetric(
-          horizontal: 10,
-          vertical: 10,
-        ),
+        actionsPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
         actions: [
           Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               Row(
                 children: [
+                  // --- SCAN BUTTON ---
                   Expanded(
                     child: ElevatedButton.icon(
                       style: ElevatedButton.styleFrom(
@@ -398,165 +262,52 @@ class _ProductsScreenState extends State<ProductsScreen> {
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
-                      onPressed: hasSku
-                          ? () async {
-                              final BuildContext parentCtx =
-                                  _scaffoldKey.currentContext ?? context;
-                              Navigator.pop(context);
-                              final result = await Navigator.push(
-                                parentCtx,
-                                MaterialPageRoute(
-                                  builder: (_) =>
-                                      CameraScannerPage(product: product),
-                                ),
-                              );
-                              // If scanner returned a duplicate, show warning here (centered)
-                              if (result != null &&
-                                  result['duplicate'] != null) {
-                                final dup = result['duplicate'];
-                                await showGeneralDialog(
-                                  context: parentCtx,
-                                  barrierDismissible: false,
-                                  barrierLabel: 'Duplicate',
-                                  transitionDuration: const Duration(
-                                    milliseconds: 150,
-                                  ),
-                                  pageBuilder: (ctx, a1, a2) {
-                                    return WillPopScope(
-                                      onWillPop: () async => false,
-                                      child: AlertDialog(
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(
-                                            20,
-                                          ),
-                                        ),
-                                        title: const Center(
-                                          child: Text(
-                                            'BARCODE TAKEN',
-                                            style: TextStyle(
-                                              color: Colors.red,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                        ),
-                                        content: Column(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Center(
-                                              child: Text(
-                                                dup['product_name'] ??
-                                                    'Unknown',
-                                                textAlign: TextAlign.center,
-                                                style: const TextStyle(
-                                                  fontWeight: FontWeight.bold,
-                                                ),
-                                              ),
-                                            ),
-                                            const SizedBox(height: 8),
-                                            Center(
-                                              child: Text(
-                                                'SKU: ${dup['product_code'] ?? ''}',
-                                                textAlign: TextAlign.center,
-                                                style: const TextStyle(
-                                                  fontFamily: 'monospace',
-                                                ),
-                                              ),
-                                            ),
-                                            const SizedBox(height: 8),
-                                            Center(
-                                              child: Text(
-                                                'Code: ${result['value'] ?? ''}',
-                                                textAlign: TextAlign.center,
-                                                style: const TextStyle(
-                                                  fontFamily: 'monospace',
-                                                  color: Colors.grey,
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                        actions: [
-                                          Center(
-                                            child: TextButton(
-                                              onPressed: () =>
-                                                  Navigator.pop(ctx),
-                                              child: const Text('OK'),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    );
-                                  },
-                                );
-                                return;
-                              }
+                      onPressed: hasSku ? () async {
+                        final BuildContext parentCtx = _scaffoldKey.currentContext ?? context;
+                        final bool alreadyHasBarcode = (product['barcode'] ?? "").toString().trim().isNotEmpty;
+                        final String effectiveAction = alreadyHasBarcode ? 'rescan' : 'scan';
 
-                              if (result != null && result['value'] != null) {
-                                final String scannedValue = result['value'];
-                                final int? typeId = result['type_id'] is int
-                                    ? result['type_id'] as int
-                                    : null;
+                        Navigator.pop(context); // Close Info Dialog
+                        
+                        final result = await Navigator.push(
+                          parentCtx,
+                          MaterialPageRoute(builder: (_) => CameraScannerPage(product: product)),
+                        );
 
-                                // Redirect to generator with prefilled scanned value/type
-                                final BuildContext parentCtx2 =
-                                    _scaffoldKey.currentContext ?? context;
-                                final genResult = await Navigator.push(
-                                  parentCtx2,
-                                  MaterialPageRoute(
-                                    builder: (context) =>
-                                        BarcodeGeneratorScreen(
-                                          product: product,
-                                          scannedBarcode: scannedValue,
-                                          scannedBarcodeTypeId: typeId,
-                                          sourceAction: sourceAction,
-                                        ),
-                                  ),
-                                );
+                        if (result != null && result['value'] != null) {
+                          final genResult = await Navigator.push(
+                            parentCtx,
+                            MaterialPageRoute(
+                              builder: (context) => BarcodeGeneratorScreen(
+                                product: product,
+                                scannedBarcode: result['value'],
+                                sourceAction: effectiveAction,
+                              ),
+                            ),
+                          );
 
-                                // Handle generator save result: generator returns a map with explicit flags
-                                if (genResult != null &&
-                                    genResult is Map &&
-                                    genResult['saved'] == true) {
-                                  final String savedCode =
-                                      (genResult['barcode'] ?? scannedValue)
-                                          .toString();
-                                  final bool wasScanned =
-                                      genResult['is_scanned'] == true;
-                                  final bool rescanFlag =
-                                      genResult['is_rescan'] == true;
-                                  final bool regenFlag =
-                                      genResult['is_regenerated'] == true;
-
-                                  if (regenFlag) {
-                                    _addHistoryItem(
-                                      product,
-                                      savedCode,
-                                      isRegenerated: true,
-                                    );
-                                  } else if (wasScanned) {
-                                    _addHistoryItem(
-                                      product,
-                                      savedCode,
-                                      isScanned: true,
-                                      isRescan: rescanFlag,
-                                    );
-                                  } else {
-                                    _addHistoryItem(
-                                      product,
-                                      savedCode,
-                                      isGenerated: true,
-                                    );
-                                  }
-                                  _loadData();
-                                }
-                              }
-                            }
-                          : null,
+                          if (genResult != null && genResult['saved'] == true) {
+                            final String savedCode = genResult['barcode'].toString();
+                            
+                            // SUCCESS MESSAGE
+                            _showSuccessDialog(product['product_name'] ?? "Product", savedCode);
+                            
+                            _addHistoryItem(
+                              product,
+                              savedCode,
+                              isScanned: true,
+                              isRescan: effectiveAction == 'rescan',
+                            );
+                            _loadData(); // Refresh list
+                          }
+                        }
+                      } : null,
                       icon: const Icon(Icons.qr_code_scanner, size: 18),
                       label: const Text("SCAN"),
                     ),
                   ),
                   const SizedBox(width: 8),
+                  // --- GENERATE BUTTON ---
                   Expanded(
                     child: ElevatedButton.icon(
                       style: ElevatedButton.styleFrom(
@@ -564,69 +315,38 @@ class _ProductsScreenState extends State<ProductsScreen> {
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
-                      onPressed: hasSku
-                          ? () async {
-                              final BuildContext parentCtx =
-                                  _scaffoldKey.currentContext ?? context;
-                              Navigator.pop(context);
-                              final genResult = await Navigator.push(
-                                parentCtx,
-                                MaterialPageRoute(
-                                  builder: (context) => BarcodeGeneratorScreen(
-                                    product: product,
-                                    sourceAction: sourceAction,
-                                  ),
-                                ),
-                              );
+                      onPressed: hasSku ? () async {
+                        final BuildContext parentCtx = _scaffoldKey.currentContext ?? context;
+                        final bool alreadyHasBarcode = (product['barcode'] ?? "").toString().trim().isNotEmpty;
+                        final String effectiveAction = alreadyHasBarcode ? 'regenerate' : 'generate';
 
-                              if (genResult != null) {
-                                if (genResult is Map &&
-                                    genResult['saved'] == true) {
-                                  final String savedCode =
-                                      (genResult['barcode'] ??
-                                              product['barcode'] ??
-                                              'NEWLY GEN')
-                                          .toString();
-                                  final bool wasScanned =
-                                      genResult['is_scanned'] == true;
-                                  final bool rescanFlag =
-                                      genResult['is_rescan'] == true;
-                                  final bool regenFlag =
-                                      genResult['is_regenerated'] == true;
+                        Navigator.pop(context);
 
-                                  if (regenFlag) {
-                                    _addHistoryItem(
-                                      product,
-                                      savedCode,
-                                      isRegenerated: true,
-                                    );
-                                  } else if (wasScanned) {
-                                    _addHistoryItem(
-                                      product,
-                                      savedCode,
-                                      isScanned: true,
-                                      isRescan: rescanFlag,
-                                    );
-                                  } else {
-                                    _addHistoryItem(
-                                      product,
-                                      savedCode,
-                                      isGenerated: true,
-                                    );
-                                  }
-                                  _loadData();
-                                } else if (genResult == true) {
-                                  // Backwards compatibility: generator returned bool true
-                                  _addHistoryItem(
-                                    product,
-                                    product['barcode'] ?? 'NEWLY GEN',
-                                    isGenerated: true,
-                                  );
-                                  _loadData();
-                                }
-                              }
-                            }
-                          : null,
+                        final genResult = await Navigator.push(
+                          parentCtx,
+                          MaterialPageRoute(
+                            builder: (context) => BarcodeGeneratorScreen(
+                              product: product,
+                              sourceAction: effectiveAction,
+                            ),
+                          ),
+                        );
+
+                        if (genResult != null && genResult['saved'] == true) {
+                          final String savedCode = genResult['barcode'].toString();
+
+                          // SUCCESS MESSAGE
+                          _showSuccessDialog(product['product_name'] ?? "Product", savedCode);
+
+                          _addHistoryItem(
+                            product,
+                            savedCode,
+                            isGenerated: effectiveAction == 'generate',
+                            isRegenerated: effectiveAction == 'regenerate',
+                          );
+                          _loadData();
+                        }
+                      } : null,
                       icon: const Icon(Icons.settings_overscan, size: 18),
                       label: const Text("GENERATE"),
                     ),
@@ -638,13 +358,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
                 alignment: Alignment.centerRight,
                 child: TextButton(
                   onPressed: () => Navigator.pop(context),
-                  child: const Text(
-                    "CLOSE",
-                    style: TextStyle(
-                      color: Color.fromARGB(255, 235, 100, 100),
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                  child: const Text("CLOSE", style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
                 ),
               ),
             ],
@@ -817,56 +531,78 @@ class _ProductsScreenState extends State<ProductsScreen> {
   }
 
   void _showSuccessDialog(String name, String code) {
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.check_circle, color: Colors.green, size: 80),
-            const SizedBox(height: 16),
-            const Text(
-              "SUCCESS!",
-              style: TextStyle(
-                fontSize: 22,
+  showDialog(
+    context: context,
+    builder: (_) => AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.green.shade50,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.check_circle, color: Colors.green, size: 60),
+          ),
+          const SizedBox(height: 20),
+          const Text(
+            "BARCODE SAVED",
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1.2,
+              color: Colors.green,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            name,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+          const SizedBox(height: 15),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade100,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.grey.shade300),
+            ),
+            child: Text(
+              code,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontFamily: 'monospace',
                 fontWeight: FontWeight.bold,
-                color: Colors.green,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text("$name updated successfully.", textAlign: TextAlign.center),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: Colors.green.shade50,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Text(
-                code,
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 2,
-                ),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          Center(
-            child: TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text(
-                "DONE",
-                style: TextStyle(fontWeight: FontWeight.bold),
+                fontSize: 18,
+                letterSpacing: 2,
               ),
             ),
           ),
         ],
       ),
-    );
-  }
+      actions: [
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue.shade900,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              padding: const EdgeInsets.symmetric(vertical: 14),
+            ),
+            onPressed: () => Navigator.pop(context),
+            child: const Text("CONTINUE", style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ),
+      ],
+    ),
+  );
+}
 
   void _addHistoryItem(
     Map<String, dynamic> product,
@@ -950,38 +686,63 @@ class _ProductsScreenState extends State<ProductsScreen> {
   // --- UI BUILDERS ---
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      key: _scaffoldKey,
-      backgroundColor: const Color(0xFFF4F7F9),
-      endDrawer: _buildHistoryDrawer(),
-      appBar: AppBar(
-        title: const Text(
-          'Inventory Master',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
-        backgroundColor: Colors.blue.shade900,
-        foregroundColor: Colors.white,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.history_rounded, size: 28),
-            onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
-            tooltip: 'Open History',
-          ),
-          const SizedBox(width: 8),
-        ],
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(130),
-          child: _buildFilterSection(),
-        ),
+Widget build(BuildContext context) {
+  return Scaffold(
+    key: _scaffoldKey,
+    backgroundColor: const Color(0xFFF4F7F9),
+    endDrawer: _buildHistoryDrawer(),
+    appBar: AppBar(
+      title: const Text(
+        'Inventory Master',
+        style: TextStyle(fontWeight: FontWeight.bold),
       ),
-      body: isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(onRefresh: _loadData, child: _buildProductList()),
-      floatingActionButton: _showBackToTop ? _buildScrollToTopBtn() : null,
-    );
-  }
-
+      backgroundColor: Colors.blue.shade900,
+      foregroundColor: Colors.white,
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.history_rounded, size: 28),
+          onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
+          tooltip: 'Open History',
+        ),
+        const SizedBox(width: 8),
+      ],
+      bottom: PreferredSize(
+        preferredSize: const Size.fromHeight(130),
+        child: _buildFilterSection(),
+      ),
+    ),
+    body: isLoading
+        ? const Center(child: CircularProgressIndicator())
+        : RefreshIndicator(onRefresh: _loadData, child: _buildProductList()),
+    
+    // UPDATED FLOATING ACTION BUTTON SECTION
+    floatingActionButton: Column(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        // Show Scroll to Top button only when scrolling down
+        if (_showBackToTop) ...[
+          _buildScrollToTopBtn(),
+          const SizedBox(height: 12),
+        ],
+        // Batch Print Button
+        FloatingActionButton(
+          heroTag: "batch_print_btn", // Important: unique tag prevents crash
+          onPressed: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => PrintScreen(allProducts: allProducts),
+              ),
+            );
+          },
+          backgroundColor: Colors.green.shade700,
+          child: const Icon(Icons.print, color: Colors.white),
+        ),
+      ],
+    ),
+  );
+}
+  
   Widget _buildFilterSection() {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
@@ -994,7 +755,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
               _applyFilters();
             },
             decoration: InputDecoration(
-              hintText: "Search product name or ID...",
+              hintText: "Search name, ID, or SKU...",
               prefixIcon: const Icon(Icons.search),
               fillColor: Colors.white,
               filled: true,
@@ -1008,6 +769,37 @@ class _ProductsScreenState extends State<ProductsScreen> {
           const SizedBox(height: 10),
           Row(
             children: [
+              // Dedicated SKU Filter: With SKU / No SKU
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: selectedSku,
+                      hint: const Text("SKU Status", style: TextStyle(color: Colors.white70, fontSize: 11)),
+                      dropdownColor: Colors.blue.shade900,
+                      iconEnabledColor: Colors.white,
+                      isExpanded: true,
+                      style: const TextStyle(color: Colors.white, fontSize: 11),
+                      items: [
+                        const DropdownMenuItem(value: null, child: Text("All")),
+                        const DropdownMenuItem(value: "With SKU", child: Text("With SKU")),
+                        const DropdownMenuItem(value: "No SKU", child: Text("No SKU")),
+                      ],
+                      onChanged: (v) {
+                        setState(() => selectedSku = v);
+                        _applyFilters();
+                      },
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 4),
+              // Brand Filter
               Expanded(
                 child: _buildDropdown(
                   hint: "Brand",
@@ -1021,7 +813,8 @@ class _ProductsScreenState extends State<ProductsScreen> {
                   },
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 4),
+              // Category Filter
               Expanded(
                 child: _buildDropdown(
                   hint: "Category",
@@ -1041,6 +834,37 @@ class _ProductsScreenState extends State<ProductsScreen> {
       ),
     );
   }
+
+// Helper for the SKU list which is just a List of Strings
+Widget _buildSimpleDropdown({
+  required String hint,
+  required String? value,
+  required List<String> items,
+  required Function(String?) onChanged,
+}) {
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8),
+    decoration: BoxDecoration(
+      color: Colors.white.withOpacity(0.15),
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: DropdownButtonHideUnderline(
+      child: DropdownButton<String>(
+        value: value,
+        hint: Text(hint, style: const TextStyle(color: Colors.white70, fontSize: 11)),
+        dropdownColor: Colors.blue.shade900,
+        iconEnabledColor: Colors.white,
+        isExpanded: true,
+        style: const TextStyle(color: Colors.white, fontSize: 11),
+        items: [
+          DropdownMenuItem(value: null, child: Text("All $hint")),
+          ...items.map((s) => DropdownMenuItem(value: s, child: Text(s))),
+        ],
+        onChanged: onChanged,
+      ),
+    ),
+  );
+}
 
   Widget _buildDropdown({
     required String hint,
@@ -1314,11 +1138,9 @@ class _ProductsScreenState extends State<ProductsScreen> {
                           ],
                         ),
                         onTap: () {
-                          // Tap history to open details popup
+                         
                           Navigator.pop(context); // Close drawer
 
-                          // Get fresh product data from allProducts list
-                          // instead of stale original_data in history
                           final originalData =
                               item['original_data'] as Map<String, dynamic>;
                           final productId = _getProductId(originalData);

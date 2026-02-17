@@ -80,49 +80,65 @@ class _CameraScannerPageState extends State<CameraScannerPage> {
           MobileScanner(
             controller: controller,
             onDetect: (capture) async {
-              if (isScanned) return;
+  if (isScanned) return;
 
-              final List<Barcode> barcodes = capture.barcodes;
-              for (final barcode in barcodes) {
-                if (barcode.rawValue != null) {
-                  final String value = barcode.rawValue!;
+  final List<Barcode> barcodes = capture.barcodes;
+  for (final barcode in barcodes) {
+    if (barcode.rawValue != null) {
+      final String value = barcode.rawValue!;
+      
+      // Stop the scanner briefly to prevent multiple overlapping scans
+      setState(() => isScanned = true);
 
-                  // 1. Check duplicate against API
-                  final dup = await _findDuplicate(value);
-                  final String currSku = (widget.product['product_code'] ?? '').toString();
-                  
-                  if (dup != null && (dup['product_code'] ?? '').toString() != currSku) {
-                    // Return duplicate info to caller so it can show the warning
-                    if (mounted) {
-                      Navigator.pop(context, {
-                        'duplicate': dup,
-                        'value': value,
-                      });
-                    }
-                    return;
-                  }
+      // 1. Check duplicate against API
+      final dup = await _findDuplicate(value);
+      final String currSku = (widget.product['product_code'] ?? '').toString();
 
-                  // 2. Map MobileScanner BarcodeFormat to your internal database ID
-                  int typeId = 0; // Default 0 => N/A
-                  final fmt = barcode.format;
-                  if (fmt == BarcodeFormat.ean13) {
-                    typeId = 1;
-                  } else if (fmt == BarcodeFormat.code128) {
-                    typeId = 2;
-                  }
+      if (dup != null && (dup['product_code'] ?? '').toString() != currSku) {
+        // --- SHOW WARNING DIALOG INSTEAD OF POPPING ---
+        if (mounted) {
+          await showDialog(
+            context: context,
+            barrierDismissible: false, // User must tap button
+            builder: (context) => AlertDialog(
+              title: const Text("Barcode Already Used"),
+              content: Text(
+                "This barcode ($value) is already assigned to:\n\n"
+                "Product: ${dup['product_name']}\n"
+                "Code: ${dup['product_code']}"
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(context); // Close Dialog
+                    setState(() => isScanned = false); // Resume Scanning
+                  },
+                  child: const Text("TRY AGAIN"),
+                ),
+              ],
+            ),
+          );
+        }
+        return; 
+      }
 
-                  // 3. Accept scan and return valid data
-                  if (mounted) {
-                    setState(() => isScanned = true);
-                    Navigator.pop(context, {
-                      'value': value, 
-                      'type_id': typeId
-                    });
-                  }
-                  break;
-                }
-              }
-            },
+      // 2. Map MobileScanner BarcodeFormat
+      int typeId = 0;
+      final fmt = barcode.format;
+      if (fmt == BarcodeFormat.ean13) typeId = 1;
+      else if (fmt == BarcodeFormat.code128) typeId = 2;
+
+      // 3. Accept valid scan and return
+      if (mounted) {
+        Navigator.pop(context, {
+          'value': value, 
+          'type_id': typeId
+        });
+      }
+      break;
+    }
+  }
+},
           ),
           
           // Scanner Overlay UI (Square target area)
