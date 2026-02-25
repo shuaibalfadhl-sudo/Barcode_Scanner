@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
-import 'barcode.dart';
+import 'scanner.dart';
 import 'barcode_generator.dart';
 import 'print.dart';
 
@@ -20,6 +20,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
   List filteredProducts = [];
   List brands = [];
   List categories = [];
+  List units = []; // <--- CHANGE: List to store fetched units
   List<Map<String, dynamic>> recentScans = [];
   String? selectedSku;
   List<String> skuList = [];
@@ -29,6 +30,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
   String searchQuery = "";
   String? selectedBrandId;
   String? selectedCategoryId;
+  String? selectedUnitId; // <--- CHANGE: Variable for Unit filter selection
 
   // Scroll Management
   final ScrollController _scrollController = ScrollController();
@@ -57,6 +59,16 @@ class _ProductsScreenState extends State<ProductsScreen> {
     setState(() {
       _showBackToTop = _scrollController.offset > 300;
     });
+  }
+
+  // <--- CHANGE: Helper to get Unit Name from ID
+  String _getUnitName(dynamic unitId) {
+    if (unitId == null || units.isEmpty) return "N/A";
+    final unit = units.firstWhere(
+      (u) => u['unit_id'].toString() == unitId.toString(),
+      orElse: () => null,
+    );
+    return unit != null ? unit['unit_name'].toString() : "N/A";
   }
 
   Future<void> _saveHistoryToDisk() async {
@@ -102,11 +114,25 @@ class _ProductsScreenState extends State<ProductsScreen> {
   Future<void> _loadData() async {
     setState(() => isLoading = true);
     try {
-      await Future.wait([_fetchProducts(), _fetchBrands(), _fetchCategories()]);
+      // <--- CHANGE: Added _fetchUnits to the initialization
+      await Future.wait([
+        _fetchProducts(),
+        _fetchBrands(),
+        _fetchCategories(),
+        _fetchUnits(),
+      ]);
     } catch (e) {
       _showSnackBar('Init Error: $e');
     } finally {
       if (mounted) setState(() => isLoading = false);
+    }
+  }
+
+  // <--- CHANGE: New function to fetch units
+  Future<void> _fetchUnits() async {
+    final res = await http.get(Uri.parse('http://192.168.0.143:8056/items/units'));
+    if (res.statusCode == 200) {
+      setState(() => units = json.decode(res.body)['data']);
     }
   }
 
@@ -162,6 +188,10 @@ class _ProductsScreenState extends State<ProductsScreen> {
         final String pCategory = (p['product_category'] ?? "").toString();
         final bool matchesCategory = selectedCategoryId == null || pCategory == selectedCategoryId;
 
+        // <--- CHANGE: Unit filtering logic
+        final String pUnit = (p['unit_of_measurement'] ?? "").toString();
+        final bool matchesUnit = selectedUnitId == null || pUnit == selectedUnitId;
+
         // UPDATED SKU Filter check for "With SKU" or "No SKU"
         bool matchesSku = true;
         if (selectedSku == "With SKU") {
@@ -170,7 +200,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
           matchesSku = skuValue.trim().isEmpty || skuValue == "null";
         }
 
-        return matchesSearch && matchesBrand && matchesCategory && matchesSku;
+        return matchesSearch && matchesBrand && matchesCategory && matchesSku && matchesUnit; // <--- CHANGE: Added matchesUnit
       }).toList();
     });
   }
@@ -194,13 +224,13 @@ class _ProductsScreenState extends State<ProductsScreen> {
     }
 
     String getWeightUnit(dynamic id) {
-      final units = {"1": "G", "2": "KG", "3": "LB", "4": "OZ"};
-      return units[id.toString()] ?? "";
+      final unitsMap = {"1": "G", "2": "KG", "3": "LB", "4": "OZ"};
+      return unitsMap[id.toString()] ?? "";
     }
 
     String getCbmUnit(dynamic id) {
-      final units = {"1": "MM", "2": "CM", "3": "M", "4": "IN", "5": "FT"};
-      return units[id.toString()] ?? "";
+      final unitsMap = {"1": "MM", "2": "CM", "3": "M", "4": "IN", "5": "FT"};
+      return unitsMap[id.toString()] ?? "";
     }
 
     final String sku = getValue('product_code');
@@ -208,6 +238,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
     final bool hasSku = sku != "N/A";
     final String weightUnit = getWeightUnit(product['weight_unit_id']);
     final String cbmUnit = getCbmUnit(product['cbm_unit_id']);
+    final String unitName = _getUnitName(product['unit_of_measurement']); // <--- CHANGE: Get unit name for modal
 
     showDialog(
       context: context,
@@ -224,6 +255,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
             children: [
               _detailRow("ID", prodId, isPrimary: true),
               _detailRow("SKU", sku),
+              _detailRow("Bundle Type", unitName), // <--- CHANGE: Display Unit Name
               _detailRow("Barcode", getValue('barcode')),
               _detailRow("BC Type", getBarcodeType(product['barcode_type_id'])),
               const Divider(),
@@ -289,7 +321,6 @@ class _ProductsScreenState extends State<ProductsScreen> {
                           if (genResult != null && genResult['saved'] == true) {
                             final String savedCode = genResult['barcode'].toString();
                             
-                            // SUCCESS MESSAGE
                             _showSuccessDialog(product['product_name'] ?? "Product", savedCode);
                             
                             _addHistoryItem(
@@ -335,7 +366,6 @@ class _ProductsScreenState extends State<ProductsScreen> {
                         if (genResult != null && genResult['saved'] == true) {
                           final String savedCode = genResult['barcode'].toString();
 
-                          // SUCCESS MESSAGE
                           _showSuccessDialog(product['product_name'] ?? "Product", savedCode);
 
                           _addHistoryItem(
@@ -707,7 +737,7 @@ Widget build(BuildContext context) {
         const SizedBox(width: 8),
       ],
       bottom: PreferredSize(
-        preferredSize: const Size.fromHeight(130),
+        preferredSize: const Size.fromHeight(185), // <--- CHANGE: Height adjusted for 2x2 grid
         child: _buildFilterSection(),
       ),
     ),
@@ -715,18 +745,15 @@ Widget build(BuildContext context) {
         ? const Center(child: CircularProgressIndicator())
         : RefreshIndicator(onRefresh: _loadData, child: _buildProductList()),
     
-    // UPDATED FLOATING ACTION BUTTON SECTION
     floatingActionButton: Column(
       mainAxisAlignment: MainAxisAlignment.end,
       children: [
-        // Show Scroll to Top button only when scrolling down
         if (_showBackToTop) ...[
           _buildScrollToTopBtn(),
           const SizedBox(height: 12),
         ],
-        // Batch Print Button
         FloatingActionButton(
-          heroTag: "batch_print_btn", // Important: unique tag prevents crash
+          heroTag: "batch_print_btn",
           onPressed: () {
             Navigator.push(
               context,
@@ -766,40 +793,40 @@ Widget build(BuildContext context) {
               ),
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
+          // <--- CHANGE: 2x2 GRID LAYOUT START
           Row(
             children: [
-              // Dedicated SKU Filter: With SKU / No SKU
               Expanded(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<String>(
-                      value: selectedSku,
-                      hint: const Text("SKU Status", style: TextStyle(color: Colors.white70, fontSize: 11)),
-                      dropdownColor: Colors.blue.shade900,
-                      iconEnabledColor: Colors.white,
-                      isExpanded: true,
-                      style: const TextStyle(color: Colors.white, fontSize: 11),
-                      items: [
-                        const DropdownMenuItem(value: null, child: Text("All")),
-                        const DropdownMenuItem(value: "With SKU", child: Text("With SKU")),
-                        const DropdownMenuItem(value: "No SKU", child: Text("No SKU")),
-                      ],
-                      onChanged: (v) {
-                        setState(() => selectedSku = v);
-                        _applyFilters();
-                      },
-                    ),
-                  ),
+                child: _buildSimpleDropdown(
+                  hint: "SKU",
+                  value: selectedSku,
+                  items: ["With SKU", "No SKU"],
+                  onChanged: (v) {
+                    setState(() => selectedSku = v);
+                    _applyFilters();
+                  },
                 ),
               ),
-              const SizedBox(width: 4),
-              // Brand Filter
+              const SizedBox(width: 8),
+              Expanded(
+                child: _buildDropdown(
+                  hint: "Unit",
+                  value: selectedUnitId,
+                  items: units,
+                  idKey: 'unit_id',
+                  nameKey: 'unit_name',
+                  onChanged: (v) {
+                    setState(() => selectedUnitId = v);
+                    _applyFilters();
+                  },
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
               Expanded(
                 child: _buildDropdown(
                   hint: "Brand",
@@ -813,8 +840,7 @@ Widget build(BuildContext context) {
                   },
                 ),
               ),
-              const SizedBox(width: 4),
-              // Category Filter
+              const SizedBox(width: 8),
               Expanded(
                 child: _buildDropdown(
                   hint: "Category",
@@ -830,6 +856,7 @@ Widget build(BuildContext context) {
               ),
             ],
           ),
+          // <--- CHANGE: 2x2 GRID LAYOUT END
         ],
       ),
     );
@@ -920,6 +947,7 @@ Widget _buildSimpleDropdown({
                   searchQuery = "";
                   selectedBrandId = null;
                   selectedCategoryId = null;
+                  selectedUnitId = null; // <--- CHANGE: Clear unit filter
                 });
                 _applyFilters();
               },
@@ -940,6 +968,7 @@ Widget _buildSimpleDropdown({
             .trim()
             .isNotEmpty;
         final String pId = _getProductId(product).toString();
+        final String unitName = _getUnitName(product['unit_of_measurement']); // <--- CHANGE: Get unit for list display
 
         return Card(
           elevation: 0,
@@ -965,6 +994,11 @@ Widget _buildSimpleDropdown({
             subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // <--- CHANGE: Display Unit Name in list
+                Text(
+                  "Unit: $unitName",
+                  style: TextStyle(color: Colors.blue.shade700, fontSize: 12, fontWeight: FontWeight.bold),
+                ),
                 Text(
                   hasBarcode ? 'BC: ${product['barcode']}' : '⚠️ No Barcode',
                   style: TextStyle(
@@ -1138,7 +1172,7 @@ Widget _buildSimpleDropdown({
                           ],
                         ),
                         onTap: () {
-                         
+                          
                           Navigator.pop(context); // Close drawer
 
                           final originalData =

@@ -48,11 +48,21 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
     super.initState();
     _loadInitialData();
 
-    _valueController.text = (widget.scannedBarcode ?? widget.product['barcode'] ?? "").toString();
+    String initialBarcodeValue = (widget.scannedBarcode ?? widget.product['barcode'] ?? "").toString();
+    _valueController.text = initialBarcodeValue;
     _weightController.text = (widget.product['weight'] ?? "").toString();
 
+    // --- AUTO-UPDATE BARCODE TYPE LOGIC ---
     if (widget.scannedBarcodeTypeId != null) {
       _selectedBarcodeType = widget.scannedBarcodeTypeId.toString();
+    } else if (widget.scannedBarcode != null) {
+      // Auto-detect type based on the scanned value string
+      final barcodeValue = widget.scannedBarcode!.trim();
+      if (barcodeValue.length == 13 && RegExp(r'^[0-9]+$').hasMatch(barcodeValue)) {
+        _selectedBarcodeType = '1'; // EAN-13
+      } else {
+        _selectedBarcodeType = '2'; // Default to Code 128 for others
+      }
     } else if (widget.product['barcode_type_id'] != null) {
       _selectedBarcodeType = widget.product['barcode_type_id'].toString();
     }
@@ -89,10 +99,8 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
     String newValue = "";
 
     if (_selectedBarcodeType == '1') {
-      // EAN-13: Requires 12 digits (the 13th is a checksum calculated by the widget)
       newValue = timestamp.substring(timestamp.length - 12);
     } else if (_selectedBarcodeType == '2') {
-      // Code 128: Alphanumeric. Using a prefix + short timestamp
       newValue = "VTX${timestamp.substring(timestamp.length - 7)}";
     } else {
       newValue = timestamp;
@@ -397,7 +405,6 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
   Future<void> _printBarcode() async {
     if (_valueController.text.isEmpty || _selectedBarcodeType == '0') return;
 
-    // 1. Show an improved Bottom Sheet for a better Mobile UI
     final bool? withDetails = await showModalBottomSheet<bool>(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -408,7 +415,6 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Handle bar for visual cue
             Container(
               width: 40,
               height: 4,
@@ -422,8 +428,6 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
             const SizedBox(height: 8),
             const Text("Choose your layout style for the label:", style: TextStyle(color: Colors.grey)),
             const SizedBox(height: 24),
-            
-            // Option 1: Barcode Only
             _buildPrintOption(
               context,
               icon: Icons.qr_code,
@@ -432,8 +436,6 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
               onTap: () => Navigator.pop(context, false),
             ),
             const SizedBox(height: 12),
-            
-            // Option 2: Full Details
             _buildPrintOption(
               context,
               icon: Icons.receipt_long,
@@ -450,7 +452,6 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
 
     if (withDetails == null) return;
 
-    // --- PDF GENERATION LOGIC REMAINS UNCHANGED ---
     try {
       final pw.Document pdf = pw.Document();
       pdf.addPage(pw.Page(
@@ -517,7 +518,6 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
     }
   }
 
-  // Helper Widget for the UI Options
   Widget _buildPrintOption(BuildContext context, {
     required IconData icon, 
     required String title, 
