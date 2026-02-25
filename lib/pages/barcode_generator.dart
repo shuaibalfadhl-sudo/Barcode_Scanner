@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:printing/printing.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
+import 'package:shared_preferences/shared_preferences.dart'; // <--- CHANGE: Added SharedPreferences
 
 class BarcodeGeneratorScreen extends StatefulWidget {
   final Map<String, dynamic> product;
@@ -127,35 +128,63 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
     }
   }
 
+  // <--- CHANGE: Made _fetchBarcodeTypes Offline First
   Future<void> _fetchBarcodeTypes() async {
+    final prefs = await SharedPreferences.getInstance();
     try {
-      final res = await http.get(Uri.parse('http://192.168.0.143:8091/items/barcode_type'));
+      final res = await http.get(Uri.parse('http://192.168.0.143:8091/items/barcode_type')).timeout(const Duration(seconds: 5));
       if (res.statusCode == 200) {
         final List data = json.decode(res.body)['data'];
+        await prefs.setString('cached_barcode_types', json.encode(data)); // Cache data
+        
         final Map<String, String> fetchedTypes = {'0': 'N/A'};
         for (var item in data) {
           if (item['is_active'] == 1) fetchedTypes[item['id'].toString()] = item['name'].toString();
         }
         if (mounted) setState(() => _barcodeTypes = fetchedTypes);
       }
-    } catch (_) {}
+    } catch (_) {
+      // Fallback to cache
+      final cached = prefs.getString('cached_barcode_types');
+      if (cached != null) {
+        final List data = json.decode(cached);
+        final Map<String, String> fetchedTypes = {'0': 'N/A'};
+        for (var item in data) {
+          if (item['is_active'] == 1) fetchedTypes[item['id'].toString()] = item['name'].toString();
+        }
+        if (mounted) setState(() => _barcodeTypes = fetchedTypes);
+      }
+    }
   }
 
+  // <--- CHANGE: Made _fetchWeightUnits Offline First
   Future<void> _fetchWeightUnits() async {
+    final prefs = await SharedPreferences.getInstance();
     try {
-      final res = await http.get(Uri.parse('http://192.168.0.143:8091/items/weight_unit'));
+      final res = await http.get(Uri.parse('http://192.168.0.143:8091/items/weight_unit')).timeout(const Duration(seconds: 5));
       if (res.statusCode == 200) {
         final List data = json.decode(res.body)['data'];
+        await prefs.setString('cached_weight_units', json.encode(data)); // Cache data
+        
         final Map<String, String> fetchedUnits = {'0': 'N/A'};
         for (var item in data) {
           if (item['is_active'] == 1) fetchedUnits[item['id'].toString()] = item['code'].toString();
         }
         if (mounted) setState(() => _weightUnits = fetchedUnits);
       }
-    } catch (_) {}
+    } catch (_) {
+      // Fallback to cache
+      final cached = prefs.getString('cached_weight_units');
+      if (cached != null) {
+        final List data = json.decode(cached);
+        final Map<String, String> fetchedUnits = {'0': 'N/A'};
+        for (var item in data) {
+          if (item['is_active'] == 1) fetchedUnits[item['id'].toString()] = item['code'].toString();
+        }
+        if (mounted) setState(() => _weightUnits = fetchedUnits);
+      }
+    }
   }
-
-  // <--- CHANGED: BARCODE TYPE VALIDATOR START --->
 
   String? get _barcodeError {
     final val = _valueController.text.trim();
@@ -171,15 +200,13 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
       }
     }
     
-    // Validate Code 128 (Optional constraints, usually any string works)
+    // Validate Code 128
     if (_selectedBarcodeType == '2' && val.length < 3) {
       return "Code 128 is too short";
     }
 
-    return null; // No errors
+    return null;
   }
-
-  // <--- CHANGED: BARCODE TYPE VALIDATOR END --->
 
   String? get _weightError {
     if (_weightController.text.isEmpty) return "Required";
@@ -203,13 +230,9 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
   }
 
   bool get _isFormValid {
-    // 1. Basic Barcode Rules (MUST not have barcode errors)
     if (_selectedBarcodeType == '0' || _barcodeError != null) return false;
-    
-    // 2. Weight Rules 
     if (_weightController.text.isEmpty || _weightError != null || _selectedWeightUnit == '0') return false;
     
-    // 3. CBM Rules 
     if (_isCbmChecked) {
       if (_selectedDimUnit == '0') return false;
       if (_lengthController.text.isEmpty || _getDimError(_lengthController) != null) return false;
@@ -220,6 +243,7 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
     return true;
   }
 
+  // <--- CHANGE: Updated _saveProduct to handle Offline Mode correctly
   Future<void> _saveProduct() async {
     setState(() => _isSaving = true);
     try {
@@ -237,11 +261,12 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
         }
       };
       
+      // <--- Added a 5-second timeout so it doesn't freeze the app indefinitely if offline
       final response = await http.patch(
         Uri.parse('http://192.168.0.143:8091/items/products/$id'),
         headers: {'Content-Type': 'application/json'},
         body: json.encode(body),
-      );
+      ).timeout(const Duration(seconds: 5));
 
       if (response.statusCode <= 204 && mounted) {
         Navigator.pop(context, {
@@ -250,10 +275,28 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
           'is_scanned': widget.scannedBarcode != null,
           'is_rescan': widget.sourceAction == 'rescan',
           'is_regenerated': widget.sourceAction == 'regenerate',
+          'is_offline': false, // <--- Inform ProductsScreen it was successfully synced online
+        });
+      } else {
+        debugPrint("🔴 Server returned an error: ${response.statusCode}");
+      }
+    } catch (e) { 
+      debugPrint("🔴 Save Error (Offline Mode Triggered): $e"); 
+      
+      // <--- CHANGE: Force a save locally by returning to ProductsScreen with is_offline = true
+      if (mounted) {
+        Navigator.pop(context, {
+          'saved': true, 
+          'barcode': _valueController.text.trim(),
+          'is_scanned': widget.scannedBarcode != null,
+          'is_rescan': widget.sourceAction == 'rescan',
+          'is_regenerated': widget.sourceAction == 'regenerate',
+          'is_offline': true, // <--- This will trigger the RED BADGE in ProductsScreen history
         });
       }
-    } catch (e) { debugPrint("🔴 Save Error: $e"); } 
-    finally { if (mounted) setState(() => _isSaving = false); }
+    } finally { 
+      if (mounted) setState(() => _isSaving = false); 
+    }
   }
 
   @override
@@ -300,13 +343,12 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
                       Expanded(
                         child: TextField(
                           controller: _valueController, 
-                          // <--- CHANGED: Passed _barcodeError to display the red warning text
                           decoration: _inputDecoration("Barcode Value", Icons.edit_note, error: _barcodeError) 
                         ),
                       ),
                       const SizedBox(width: 8),
                       SizedBox(
-                        height: 48, // Ensures button height matches input field before errors
+                        height: 48, 
                         child: ElevatedButton(
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color.fromARGB(255, 255, 0, 128),
@@ -444,7 +486,6 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
         width: double.infinity, padding: const EdgeInsets.all(24),
         decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.blue.shade100)),
         child: Column(children: [
-          // <--- CHANGED: The Live Preview will only render if there are NO errors
           if (_valueController.text.isNotEmpty && _selectedBarcodeType != '0' && _barcodeError == null)
             BarcodeWidget(
               barcode: _selectedBarcodeType == '1' ? Barcode.ean13() : Barcode.code128(), 
@@ -474,7 +515,6 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
   }
 
   Future<void> _printBarcode() async {
-    // Prevent printing if barcode is invalid
     if (_valueController.text.isEmpty || _selectedBarcodeType == '0' || _barcodeError != null) return;
 
     final bool? withDetails = await showModalBottomSheet<bool>(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:shared_preferences/shared_preferences.dart'; // <--- CHANGE: Added this import
 
 class CameraScannerPage extends StatefulWidget {
   final Map<String, dynamic> product;
@@ -27,32 +28,50 @@ class _CameraScannerPageState extends State<CameraScannerPage> {
     super.dispose();
   }
 
-  /// Checks if the scanned barcode already exists in the database 
-  /// for a different product code.
+  /// <--- CHANGE: Updated to check for duplicates Offline FIRST
   Future<Map<String, dynamic>?> _findDuplicate(String barcode) async {
     if (barcode.isEmpty) return null;
+    
+    List data = [];
+    final prefs = await SharedPreferences.getInstance();
+    
     try {
+      // 1. Try to fetch from Live API with a fast timeout
       final res = await http.get(
-        Uri.parse('http://192.168.0.143:8091/items/products'),
-      );
+        Uri.parse('http://192.168.0.143:8091/items/products?limit=-1'),
+      ).timeout(const Duration(seconds: 3));
+      
       if (res.statusCode == 200) {
-        final List data = json.decode(res.body)['data'];
-        final String currSku = (widget.product['product_code'] ?? '').toString();
-        
-        for (var p in data) {
-          final String existing = (p['barcode'] ?? '').toString().trim();
-          final String otherSku = (p['product_code'] ?? '').toString();
-          
-          // If the barcode matches but the product code is different, it's a duplicate
-          if (existing == barcode && otherSku != currSku) {
-            return Map<String, dynamic>.from(p);
-          }
-        }
+        data = json.decode(res.body)['data'];
+        // Update cache silently
+        await prefs.setString('cached_products', json.encode(data));
       }
     } catch (e) {
-      debugPrint("Error checking duplicate: $e");
+      debugPrint("Network error checking duplicate, falling back to local cache: $e");
+      
+      // 2. Fallback to local cache if API fails
+      final cached = prefs.getString('cached_products');
+      if (cached != null) {
+        data = json.decode(cached);
+      }
     }
-    return null;
+
+    // 3. Process the data (whether from Live API or Local Cache)
+    if (data.isNotEmpty) {
+      final String currSku = (widget.product['product_code'] ?? '').toString();
+      
+      for (var p in data) {
+        final String existing = (p['barcode'] ?? '').toString().trim();
+        final String otherSku = (p['product_code'] ?? '').toString();
+        
+        // If the barcode matches but the product code is different, it's a duplicate
+        if (existing == barcode && otherSku != currSku) {
+          return Map<String, dynamic>.from(p);
+        }
+      }
+    }
+    
+    return null; // No duplicate found
   }
 
   @override
@@ -90,7 +109,7 @@ class _CameraScannerPageState extends State<CameraScannerPage> {
       // Stop the scanner briefly to prevent multiple overlapping scans
       setState(() => isScanned = true);
 
-      // 1. Check duplicate against API
+      // 1. Check duplicate against API/Cache
       final dup = await _findDuplicate(value);
       final String currSku = (widget.product['product_code'] ?? '').toString();
 
