@@ -10,7 +10,7 @@ class BarcodeGeneratorScreen extends StatefulWidget {
   final Map<String, dynamic> product;
   final String? scannedBarcode;
   final int? scannedBarcodeTypeId;
-  final String? sourceAction; // 'rescan' or 'regenerate'
+  final String? sourceAction;
 
   const BarcodeGeneratorScreen({
     super.key,
@@ -43,16 +43,31 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
 
   final Map<String, String> _dimUnits = {'0': 'N/A', '1': 'MM', '2': 'CM', '3': 'M', '4': 'IN', '5': 'FT'};
 
+  // Helper to prevent "null" strings breaking text controllers
+  String _cleanString(dynamic val) {
+    if (val == null || val.toString() == "null" || val.toString().trim().isEmpty) {
+      return "";
+    }
+    return val.toString();
+  }
+
   @override
   void initState() {
     super.initState();
     _loadInitialData();
 
-    _valueController.text = (widget.scannedBarcode ?? widget.product['barcode'] ?? "").toString();
-    _weightController.text = (widget.product['weight'] ?? "").toString();
+    _valueController.text = _cleanString(widget.scannedBarcode ?? widget.product['barcode']);
+    _weightController.text = _cleanString(widget.product['weight']);
 
     if (widget.scannedBarcodeTypeId != null) {
       _selectedBarcodeType = widget.scannedBarcodeTypeId.toString();
+    } else if (widget.scannedBarcode != null) {
+      final barcodeValue = widget.scannedBarcode!.trim();
+      if (barcodeValue.length == 13 && RegExp(r'^[0-9]+$').hasMatch(barcodeValue)) {
+        _selectedBarcodeType = '1'; 
+      } else {
+        _selectedBarcodeType = '2'; 
+      }
     } else if (widget.product['barcode_type_id'] != null) {
       _selectedBarcodeType = widget.product['barcode_type_id'].toString();
     }
@@ -61,16 +76,20 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
       _selectedWeightUnit = widget.product['weight_unit_id'].toString();
     }
 
-    if (widget.product['cbm_unit_id'] != null) {
+    if (widget.product['cbm_unit_id'] != null && widget.product['cbm_unit_id'].toString() != "null") {
       _isCbmChecked = true;
       _selectedDimUnit = widget.product['cbm_unit_id'].toString();
-      _lengthController.text = (widget.product['cbm_length'] ?? "").toString();
-      _widthController.text = (widget.product['cbm_width'] ?? "").toString();
-      _heightController.text = (widget.product['cbm_height'] ?? "").toString();
+      _lengthController.text = _cleanString(widget.product['cbm_length']);
+      _widthController.text = _cleanString(widget.product['cbm_width']);
+      _heightController.text = _cleanString(widget.product['cbm_height']);
     }
     
+    // Add listeners to trigger validation UI updates
     _valueController.addListener(() => setState(() {}));
     _weightController.addListener(() => setState(() {}));
+    _lengthController.addListener(() => setState(() {}));
+    _widthController.addListener(() => setState(() {}));
+    _heightController.addListener(() => setState(() {}));
   }
 
   @override
@@ -83,16 +102,13 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
     super.dispose();
   }
 
-  // --- BARCODE GENERATION LOGIC ---
   void _generateUniqueBarcode() {
     final String timestamp = DateTime.now().millisecondsSinceEpoch.toString();
     String newValue = "";
 
     if (_selectedBarcodeType == '1') {
-      // EAN-13: Requires 12 digits (the 13th is a checksum calculated by the widget)
       newValue = timestamp.substring(timestamp.length - 12);
     } else if (_selectedBarcodeType == '2') {
-      // Code 128: Alphanumeric. Using a prefix + short timestamp
       newValue = "VTX${timestamp.substring(timestamp.length - 7)}";
     } else {
       newValue = timestamp;
@@ -115,7 +131,7 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
 
   Future<void> _fetchBarcodeTypes() async {
     try {
-      final res = await http.get(Uri.parse('http://192.168.0.143:8056/items/barcode_type'));
+      final res = await http.get(Uri.parse('http://192.168.0.143:8091/items/barcode_type'));
       if (res.statusCode == 200) {
         final List data = json.decode(res.body)['data'];
         final Map<String, String> fetchedTypes = {'0': 'N/A'};
@@ -129,7 +145,7 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
 
   Future<void> _fetchWeightUnits() async {
     try {
-      final res = await http.get(Uri.parse('http://192.168.0.143:8056/items/weight_unit'));
+      final res = await http.get(Uri.parse('http://192.168.0.143:8091/items/weight_unit'));
       if (res.statusCode == 200) {
         final List data = json.decode(res.body)['data'];
         final Map<String, String> fetchedUnits = {'0': 'N/A'};
@@ -141,27 +157,51 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
     } catch (_) {}
   }
 
-  // --- VALIDATION ---
+  // <--- CHANGED: STRICT VALIDATION LOGIC START --->
+  
   String? get _weightError {
-    if (_weightController.text.isEmpty) return null;
+    // Show error only if they started typing something invalid, 
+    // or if the field is empty but we require it (it's always required now)
+    if (_weightController.text.isEmpty) return "Required";
     final val = double.tryParse(_weightController.text);
-    if (val == null) return "Invalid numeric value";
-    if (val <= 0) return "Weight must be > 0";
+    if (val == null) return "Invalid";
+    if (val <= 0) return "Must be > 0";
     return null;
   }
 
   String? get _unitError {
-    if (_weightController.text.isNotEmpty && _selectedWeightUnit == '0') return "Select unit";
+    if (_selectedWeightUnit == '0') return "Req";
+    return null;
+  }
+
+  String? _getDimError(TextEditingController controller) {
+    if (!_isCbmChecked) return null;
+    if (controller.text.isEmpty) return "Req";
+    final val = double.tryParse(controller.text);
+    if (val == null || val <= 0) return "Inv"; 
     return null;
   }
 
   bool get _isFormValid {
+    // 1. Basic Barcode Rules
     if (_selectedBarcodeType == '0' || _valueController.text.trim().isEmpty) return false;
-    if (_weightError != null || _unitError != null) return false;
+    
+    // 2. Weight Rules (MUST be filled and have a unit)
+    if (_weightController.text.isEmpty || _weightError != null || _selectedWeightUnit == '0') return false;
+    
+    // 3. CBM Rules (If checked, ALL dims and the unit must be valid)
+    if (_isCbmChecked) {
+      if (_selectedDimUnit == '0') return false;
+      if (_lengthController.text.isEmpty || _getDimError(_lengthController) != null) return false;
+      if (_widthController.text.isEmpty || _getDimError(_widthController) != null) return false;
+      if (_heightController.text.isEmpty || _getDimError(_heightController) != null) return false;
+    }
+    
     return true;
   }
+  
+  // <--- CHANGED: STRICT VALIDATION LOGIC END --->
 
-  // --- SAVE ACTION ---
   Future<void> _saveProduct() async {
     setState(() => _isSaving = true);
     try {
@@ -180,7 +220,7 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
       };
       
       final response = await http.patch(
-        Uri.parse('http://192.168.0.143:8056/items/products/$id'),
+        Uri.parse('http://192.168.0.143:8091/items/products/$id'),
         headers: {'Content-Type': 'application/json'},
         body: json.encode(body),
       );
@@ -296,16 +336,22 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
                   ),
                   if (_isCbmChecked) ...[
                     Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _buildDimField(_lengthController, "L"),
-                        _buildDimField(_widthController, "W"),
-                        _buildDimField(_heightController, "H"),
+                        _buildDimField(_lengthController, "L", error: _getDimError(_lengthController)),
+                        _buildDimField(_widthController, "W", error: _getDimError(_widthController)),
+                        _buildDimField(_heightController, "H", error: _getDimError(_heightController)),
                         const SizedBox(width: 8),
                         SizedBox(
                           width: 80,
                           child: DropdownButtonFormField<String>(
                             value: _selectedDimUnit,
-                            decoration: const InputDecoration(isDense: true, labelText: "Unit"),
+                            decoration: InputDecoration(
+                              isDense: true, 
+                              labelText: "Unit",
+                              // Add red border/error text if CBM is checked but no unit is selected
+                              errorText: _selectedDimUnit == '0' ? "Req" : null,
+                            ),
                             items: _dimUnits.entries.map((e) => DropdownMenuItem(value: e.key, child: Text(e.value))).toList(),
                             onChanged: (val) => setState(() => _selectedDimUnit = val!),
                           ),
@@ -350,13 +396,19 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
     );
   }
 
-  Widget _buildDimField(TextEditingController controller, String hint) {
+  Widget _buildDimField(TextEditingController controller, String hint, {String? error}) {
     return Expanded(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 2),
         child: TextField(
-          controller: controller, keyboardType: TextInputType.number,
-          decoration: InputDecoration(labelText: hint, isDense: true, border: OutlineInputBorder(borderRadius: BorderRadius.circular(8))),
+          controller: controller, 
+          keyboardType: TextInputType.number,
+          decoration: InputDecoration(
+            labelText: hint, 
+            errorText: error, 
+            isDense: true, 
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8))
+          ),
         ),
       ),
     );
@@ -397,7 +449,6 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
   Future<void> _printBarcode() async {
     if (_valueController.text.isEmpty || _selectedBarcodeType == '0') return;
 
-    // 1. Show an improved Bottom Sheet for a better Mobile UI
     final bool? withDetails = await showModalBottomSheet<bool>(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -408,7 +459,6 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Handle bar for visual cue
             Container(
               width: 40,
               height: 4,
@@ -422,8 +472,6 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
             const SizedBox(height: 8),
             const Text("Choose your layout style for the label:", style: TextStyle(color: Colors.grey)),
             const SizedBox(height: 24),
-            
-            // Option 1: Barcode Only
             _buildPrintOption(
               context,
               icon: Icons.qr_code,
@@ -432,8 +480,6 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
               onTap: () => Navigator.pop(context, false),
             ),
             const SizedBox(height: 12),
-            
-            // Option 2: Full Details
             _buildPrintOption(
               context,
               icon: Icons.receipt_long,
@@ -450,7 +496,6 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
 
     if (withDetails == null) return;
 
-    // --- PDF GENERATION LOGIC REMAINS UNCHANGED ---
     try {
       final pw.Document pdf = pw.Document();
       pdf.addPage(pw.Page(
@@ -517,7 +562,6 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
     }
   }
 
-  // Helper Widget for the UI Options
   Widget _buildPrintOption(BuildContext context, {
     required IconData icon, 
     required String title, 

@@ -33,7 +33,7 @@ class _CameraScannerPageState extends State<CameraScannerPage> {
     if (barcode.isEmpty) return null;
     try {
       final res = await http.get(
-        Uri.parse('http://192.168.0.143:8056/items/products'),
+        Uri.parse('http://192.168.0.143:8091/items/products'),
       );
       if (res.statusCode == 200) {
         final List data = json.decode(res.body)['data'];

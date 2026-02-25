@@ -87,7 +87,7 @@ class _LoginPageState extends State<LoginPage> {
     setState(() => _isLoading = true);
 
     try {
-      final response = await http.get(Uri.parse('http://192.168.0.143:8056/items/user'));
+      final response = await http.get(Uri.parse('http://192.168.0.143:8091/items/user'));
 
       if (response.statusCode == 200) {
         final List users = json.decode(response.body)['data'];

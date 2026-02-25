@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
-import 'barcode.dart';
+import 'scanner.dart';
 import 'barcode_generator.dart';
 import 'print.dart';
 
@@ -20,6 +20,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
   List filteredProducts = [];
   List brands = [];
   List categories = [];
+  List units = []; 
   List<Map<String, dynamic>> recentScans = [];
   String? selectedSku;
   List<String> skuList = [];
@@ -29,6 +30,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
   String searchQuery = "";
   String? selectedBrandId;
   String? selectedCategoryId;
+  String? selectedUnitId; 
 
   // Scroll Management
   final ScrollController _scrollController = ScrollController();
@@ -57,6 +59,15 @@ class _ProductsScreenState extends State<ProductsScreen> {
     setState(() {
       _showBackToTop = _scrollController.offset > 300;
     });
+  }
+
+  String _getUnitName(dynamic unitId) {
+    if (unitId == null || units.isEmpty) return "N/A";
+    final unit = units.firstWhere(
+      (u) => u['unit_id'].toString() == unitId.toString(),
+      orElse: () => null,
+    );
+    return unit != null ? unit['unit_name'].toString() : "N/A";
   }
 
   Future<void> _saveHistoryToDisk() async {
@@ -102,7 +113,12 @@ class _ProductsScreenState extends State<ProductsScreen> {
   Future<void> _loadData() async {
     setState(() => isLoading = true);
     try {
-      await Future.wait([_fetchProducts(), _fetchBrands(), _fetchCategories()]);
+      await Future.wait([
+        _fetchProducts(),
+        _fetchBrands(),
+        _fetchCategories(),
+        _fetchUnits(),
+      ]);
     } catch (e) {
       _showSnackBar('Init Error: $e');
     } finally {
@@ -110,9 +126,16 @@ class _ProductsScreenState extends State<ProductsScreen> {
     }
   }
 
+  Future<void> _fetchUnits() async {
+    final res = await http.get(Uri.parse('http://192.168.0.143:8091/items/units'));
+    if (res.statusCode == 200) {
+      setState(() => units = json.decode(res.body)['data']);
+    }
+  }
+
   Future<void> _fetchProducts() async {
     final response = await http.get(
-      Uri.parse('http://192.168.0.143:8056/items/products'),
+      Uri.parse('http://192.168.0.143:8091/items/products'),
     );
     if (response.statusCode == 200) {
       List data = json.decode(response.body)['data'];
@@ -132,7 +155,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
 
   Future<void> _fetchBrands() async {
     final res = await http.get(
-      Uri.parse('http://192.168.0.143:8056/items/brand'),
+      Uri.parse('http://192.168.0.143:8091/items/brand'),
     );
     if (res.statusCode == 200)
       setState(() => brands = json.decode(res.body)['data']);
@@ -140,7 +163,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
 
   Future<void> _fetchCategories() async {
     final res = await http.get(
-      Uri.parse('http://192.168.0.143:8056/items/categories'),
+      Uri.parse('http://192.168.0.143:8091/items/categories'),
     );
     if (res.statusCode == 200)
       setState(() => categories = json.decode(res.body)['data']);
@@ -162,6 +185,9 @@ class _ProductsScreenState extends State<ProductsScreen> {
         final String pCategory = (p['product_category'] ?? "").toString();
         final bool matchesCategory = selectedCategoryId == null || pCategory == selectedCategoryId;
 
+        final String pUnit = (p['unit_of_measurement'] ?? "").toString();
+        final bool matchesUnit = selectedUnitId == null || pUnit == selectedUnitId;
+
         // UPDATED SKU Filter check for "With SKU" or "No SKU"
         bool matchesSku = true;
         if (selectedSku == "With SKU") {
@@ -170,7 +196,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
           matchesSku = skuValue.trim().isEmpty || skuValue == "null";
         }
 
-        return matchesSearch && matchesBrand && matchesCategory && matchesSku;
+        return matchesSearch && matchesBrand && matchesCategory && matchesSku && matchesUnit; 
       }).toList();
     });
   }
@@ -194,13 +220,13 @@ class _ProductsScreenState extends State<ProductsScreen> {
     }
 
     String getWeightUnit(dynamic id) {
-      final units = {"1": "G", "2": "KG", "3": "LB", "4": "OZ"};
-      return units[id.toString()] ?? "";
+      final unitsMap = {"1": "G", "2": "KG", "3": "LB", "4": "OZ"};
+      return unitsMap[id.toString()] ?? "";
     }
 
     String getCbmUnit(dynamic id) {
-      final units = {"1": "MM", "2": "CM", "3": "M", "4": "IN", "5": "FT"};
-      return units[id.toString()] ?? "";
+      final unitsMap = {"1": "MM", "2": "CM", "3": "M", "4": "IN", "5": "FT"};
+      return unitsMap[id.toString()] ?? "";
     }
 
     final String sku = getValue('product_code');
@@ -208,6 +234,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
     final bool hasSku = sku != "N/A";
     final String weightUnit = getWeightUnit(product['weight_unit_id']);
     final String cbmUnit = getCbmUnit(product['cbm_unit_id']);
+    final String unitName = _getUnitName(product['unit_of_measurement']); 
 
     showDialog(
       context: context,
@@ -224,6 +251,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
             children: [
               _detailRow("ID", prodId, isPrimary: true),
               _detailRow("SKU", sku),
+              _detailRow("Bundle Type", unitName), 
               _detailRow("Barcode", getValue('barcode')),
               _detailRow("BC Type", getBarcodeType(product['barcode_type_id'])),
               const Divider(),
@@ -289,7 +317,6 @@ class _ProductsScreenState extends State<ProductsScreen> {
                           if (genResult != null && genResult['saved'] == true) {
                             final String savedCode = genResult['barcode'].toString();
                             
-                            // SUCCESS MESSAGE
                             _showSuccessDialog(product['product_name'] ?? "Product", savedCode);
                             
                             _addHistoryItem(
@@ -335,7 +362,6 @@ class _ProductsScreenState extends State<ProductsScreen> {
                         if (genResult != null && genResult['saved'] == true) {
                           final String savedCode = genResult['barcode'].toString();
 
-                          // SUCCESS MESSAGE
                           _showSuccessDialog(product['product_name'] ?? "Product", savedCode);
 
                           _addHistoryItem(
@@ -656,7 +682,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
 
     try {
       final response = await http.patch(
-        Uri.parse('http://192.168.0.143:8056/items/products/$id'),
+        Uri.parse('http://192.168.0.143:8091/items/products/$id'),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({'barcode': newBarcode}),
       );
@@ -693,7 +719,7 @@ Widget build(BuildContext context) {
     endDrawer: _buildHistoryDrawer(),
     appBar: AppBar(
       title: const Text(
-        'Inventory Master',
+        'Product Barcoding',
         style: TextStyle(fontWeight: FontWeight.bold),
       ),
       backgroundColor: Colors.blue.shade900,
@@ -707,7 +733,7 @@ Widget build(BuildContext context) {
         const SizedBox(width: 8),
       ],
       bottom: PreferredSize(
-        preferredSize: const Size.fromHeight(130),
+        preferredSize: const Size.fromHeight(185), 
         child: _buildFilterSection(),
       ),
     ),
@@ -715,18 +741,15 @@ Widget build(BuildContext context) {
         ? const Center(child: CircularProgressIndicator())
         : RefreshIndicator(onRefresh: _loadData, child: _buildProductList()),
     
-    // UPDATED FLOATING ACTION BUTTON SECTION
     floatingActionButton: Column(
       mainAxisAlignment: MainAxisAlignment.end,
       children: [
-        // Show Scroll to Top button only when scrolling down
         if (_showBackToTop) ...[
           _buildScrollToTopBtn(),
           const SizedBox(height: 12),
         ],
-        // Batch Print Button
         FloatingActionButton(
-          heroTag: "batch_print_btn", // Important: unique tag prevents crash
+          heroTag: "batch_print_btn",
           onPressed: () {
             Navigator.push(
               context,
@@ -766,40 +789,39 @@ Widget build(BuildContext context) {
               ),
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           Row(
             children: [
-              // Dedicated SKU Filter: With SKU / No SKU
               Expanded(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<String>(
-                      value: selectedSku,
-                      hint: const Text("SKU Status", style: TextStyle(color: Colors.white70, fontSize: 11)),
-                      dropdownColor: Colors.blue.shade900,
-                      iconEnabledColor: Colors.white,
-                      isExpanded: true,
-                      style: const TextStyle(color: Colors.white, fontSize: 11),
-                      items: [
-                        const DropdownMenuItem(value: null, child: Text("All")),
-                        const DropdownMenuItem(value: "With SKU", child: Text("With SKU")),
-                        const DropdownMenuItem(value: "No SKU", child: Text("No SKU")),
-                      ],
-                      onChanged: (v) {
-                        setState(() => selectedSku = v);
-                        _applyFilters();
-                      },
-                    ),
-                  ),
+                child: _buildSimpleDropdown(
+                  hint: "SKU",
+                  value: selectedSku,
+                  items: ["With SKU", "No SKU"],
+                  onChanged: (v) {
+                    setState(() => selectedSku = v);
+                    _applyFilters();
+                  },
                 ),
               ),
-              const SizedBox(width: 4),
-              // Brand Filter
+              const SizedBox(width: 8),
+              Expanded(
+                child: _buildDropdown(
+                  hint: "Unit",
+                  value: selectedUnitId,
+                  items: units,
+                  idKey: 'unit_id',
+                  nameKey: 'unit_name',
+                  onChanged: (v) {
+                    setState(() => selectedUnitId = v);
+                    _applyFilters();
+                  },
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
               Expanded(
                 child: _buildDropdown(
                   hint: "Brand",
@@ -813,8 +835,7 @@ Widget build(BuildContext context) {
                   },
                 ),
               ),
-              const SizedBox(width: 4),
-              // Category Filter
+              const SizedBox(width: 8),
               Expanded(
                 child: _buildDropdown(
                   hint: "Category",
@@ -866,6 +887,7 @@ Widget _buildSimpleDropdown({
   );
 }
 
+  // <--- CHANGE: Replaced standard dropdown with an InkWell that opens a bottom sheet modal
   Widget _buildDropdown({
     required String hint,
     required String? value,
@@ -874,35 +896,178 @@ Widget _buildSimpleDropdown({
     required String nameKey,
     required Function(String?) onChanged,
   }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.15),
-        borderRadius: BorderRadius.circular(8),
+    // Determine what text to display on the button
+    String displayValue = "All $hint";
+    if (value != null) {
+      final selectedItem = items.firstWhere(
+        (item) => item[idKey].toString() == value,
+        orElse: () => null,
+      );
+      if (selectedItem != null) {
+        displayValue = selectedItem[nameKey].toString();
+      }
+    }
+
+    return InkWell(
+      onTap: () => _showFilterModal(
+        context: context,
+        title: hint,
+        items: items,
+        idKey: idKey,
+        nameKey: nameKey,
+        currentValue: value,
+        onChanged: onChanged,
       ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: value,
-          hint: Text(
-            hint,
-            style: const TextStyle(color: Colors.white70, fontSize: 13),
-          ),
-          dropdownColor: Colors.blue.shade900,
-          iconEnabledColor: Colors.white,
-          isExpanded: true,
-          style: const TextStyle(color: Colors.white, fontSize: 13),
-          items: [
-            DropdownMenuItem(value: null, child: Text("All $hint")),
-            ...items.map(
-              (item) => DropdownMenuItem(
-                value: item[idKey].toString(),
-                child: Text(item[nameKey].toString()),
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Expanded(
+              child: Text(
+                displayValue,
+                style: TextStyle(
+                  color: value == null ? Colors.white70 : Colors.white, 
+                  fontSize: 13,
+                ),
+                overflow: TextOverflow.ellipsis,
               ),
             ),
+            const Icon(Icons.arrow_drop_down, color: Colors.white, size: 20),
           ],
-          onChanged: onChanged,
         ),
       ),
+    );
+  }
+
+  // <--- CHANGE: New method to display the Modal Bottom Sheet with a Search Bar
+  void _showFilterModal({
+    required BuildContext context,
+    required String title,
+    required List items,
+    required String idKey,
+    required String nameKey,
+    required String? currentValue,
+    required Function(String?) onChanged,
+  }) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (BuildContext context) {
+        String modalSearchQuery = "";
+        
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setModalState) {
+            // Filter the items based on the search bar input inside the modal
+            final filteredList = items.where((item) {
+              return item[nameKey]
+                  .toString()
+                  .toLowerCase()
+                  .contains(modalSearchQuery.toLowerCase());
+            }).toList();
+
+            // <--- FIXED: Using Container with a set height instead of FractionallySizedBox
+            return Container(
+              height: MediaQuery.of(context).size.height * 0.7, // 70% of screen height
+              child: Padding(
+                // Adjust padding for keyboard so search bar doesn't get covered
+                padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+                child: Column(
+                  children: [
+                    const SizedBox(height: 10),
+                    Container(
+                      width: 40, 
+                      height: 5, 
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300], 
+                        borderRadius: BorderRadius.circular(10)
+                      )
+                    ),
+                    const SizedBox(height: 15),
+                    Text(
+                      "Select $title", 
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: TextField(
+                        onChanged: (val) {
+                          setModalState(() {
+                            modalSearchQuery = val;
+                          });
+                        },
+                        decoration: InputDecoration(
+                          hintText: "Search $title...",
+                          prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                          filled: true,
+                          fillColor: Colors.grey.shade100,
+                          contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide.none,
+                          ),
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: ListView(
+                        children: [
+                          ListTile(
+                            title: Text(
+                              "All $title", 
+                              style: TextStyle(
+                                fontWeight: currentValue == null ? FontWeight.bold : FontWeight.normal,
+                                color: currentValue == null ? Colors.blue.shade900 : Colors.black87
+                              )
+                            ),
+                            trailing: currentValue == null ? Icon(Icons.check_circle, color: Colors.blue.shade900) : null,
+                            onTap: () {
+                              onChanged(null);
+                              Navigator.pop(context);
+                            },
+                          ),
+                          const Divider(height: 1),
+                          ...filteredList.map((item) {
+                            final bool isSelected = currentValue == item[idKey].toString();
+                            return Column(
+                              children: [
+                                ListTile(
+                                  title: Text(
+                                    item[nameKey].toString(), 
+                                    style: TextStyle(
+                                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                      color: isSelected ? Colors.blue.shade900 : Colors.black87
+                                    )
+                                  ),
+                                  trailing: isSelected ? Icon(Icons.check_circle, color: Colors.blue.shade900) : null,
+                                  onTap: () {
+                                    onChanged(item[idKey].toString());
+                                    Navigator.pop(context);
+                                  },
+                                ),
+                                const Divider(height: 1),
+                              ],
+                            );
+                          }).toList(),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -920,6 +1085,8 @@ Widget _buildSimpleDropdown({
                   searchQuery = "";
                   selectedBrandId = null;
                   selectedCategoryId = null;
+                  selectedUnitId = null; 
+                  selectedSku = null;
                 });
                 _applyFilters();
               },
@@ -940,6 +1107,7 @@ Widget _buildSimpleDropdown({
             .trim()
             .isNotEmpty;
         final String pId = _getProductId(product).toString();
+        final String unitName = _getUnitName(product['unit_of_measurement']); 
 
         return Card(
           elevation: 0,
@@ -965,6 +1133,10 @@ Widget _buildSimpleDropdown({
             subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Text(
+                  "Unit: $unitName",
+                  style: TextStyle(color: Colors.blue.shade700, fontSize: 12, fontWeight: FontWeight.bold),
+                ),
                 Text(
                   hasBarcode ? 'BC: ${product['barcode']}' : '⚠️ No Barcode',
                   style: TextStyle(
@@ -1138,7 +1310,7 @@ Widget _buildSimpleDropdown({
                           ],
                         ),
                         onTap: () {
-                         
+                          
                           Navigator.pop(context); // Close drawer
 
                           final originalData =

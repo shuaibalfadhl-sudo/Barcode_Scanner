@@ -37,7 +37,7 @@ class _PrintScreenState extends State<PrintScreen> {
 
   Future<void> _fetchBarcodeTypes() async {
     try {
-      final response = await http.get(Uri.parse('http://192.168.0.143:8056/items/barcode_type'));
+      final response = await http.get(Uri.parse('http://192.168.0.143:8091/items/barcode_type'));
       if (response.statusCode == 200) {
         final Map<String, dynamic> responseData = json.decode(response.body);
         final List typesList = responseData['data'] ?? [];
