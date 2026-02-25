@@ -20,7 +20,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
   List filteredProducts = [];
   List brands = [];
   List categories = [];
-  List units = []; // <--- CHANGE: List to store fetched units
+  List units = []; 
   List<Map<String, dynamic>> recentScans = [];
   String? selectedSku;
   List<String> skuList = [];
@@ -30,7 +30,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
   String searchQuery = "";
   String? selectedBrandId;
   String? selectedCategoryId;
-  String? selectedUnitId; // <--- CHANGE: Variable for Unit filter selection
+  String? selectedUnitId; 
 
   // Scroll Management
   final ScrollController _scrollController = ScrollController();
@@ -61,7 +61,6 @@ class _ProductsScreenState extends State<ProductsScreen> {
     });
   }
 
-  // <--- CHANGE: Helper to get Unit Name from ID
   String _getUnitName(dynamic unitId) {
     if (unitId == null || units.isEmpty) return "N/A";
     final unit = units.firstWhere(
@@ -114,7 +113,6 @@ class _ProductsScreenState extends State<ProductsScreen> {
   Future<void> _loadData() async {
     setState(() => isLoading = true);
     try {
-      // <--- CHANGE: Added _fetchUnits to the initialization
       await Future.wait([
         _fetchProducts(),
         _fetchBrands(),
@@ -128,9 +126,8 @@ class _ProductsScreenState extends State<ProductsScreen> {
     }
   }
 
-  // <--- CHANGE: New function to fetch units
   Future<void> _fetchUnits() async {
-    final res = await http.get(Uri.parse('http://192.168.0.143:8056/items/units'));
+    final res = await http.get(Uri.parse('http://192.168.0.143:8091/items/units'));
     if (res.statusCode == 200) {
       setState(() => units = json.decode(res.body)['data']);
     }
@@ -138,7 +135,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
 
   Future<void> _fetchProducts() async {
     final response = await http.get(
-      Uri.parse('http://192.168.0.143:8056/items/products'),
+      Uri.parse('http://192.168.0.143:8091/items/products'),
     );
     if (response.statusCode == 200) {
       List data = json.decode(response.body)['data'];
@@ -158,7 +155,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
 
   Future<void> _fetchBrands() async {
     final res = await http.get(
-      Uri.parse('http://192.168.0.143:8056/items/brand'),
+      Uri.parse('http://192.168.0.143:8091/items/brand'),
     );
     if (res.statusCode == 200)
       setState(() => brands = json.decode(res.body)['data']);
@@ -166,7 +163,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
 
   Future<void> _fetchCategories() async {
     final res = await http.get(
-      Uri.parse('http://192.168.0.143:8056/items/categories'),
+      Uri.parse('http://192.168.0.143:8091/items/categories'),
     );
     if (res.statusCode == 200)
       setState(() => categories = json.decode(res.body)['data']);
@@ -188,7 +185,6 @@ class _ProductsScreenState extends State<ProductsScreen> {
         final String pCategory = (p['product_category'] ?? "").toString();
         final bool matchesCategory = selectedCategoryId == null || pCategory == selectedCategoryId;
 
-        // <--- CHANGE: Unit filtering logic
         final String pUnit = (p['unit_of_measurement'] ?? "").toString();
         final bool matchesUnit = selectedUnitId == null || pUnit == selectedUnitId;
 
@@ -200,7 +196,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
           matchesSku = skuValue.trim().isEmpty || skuValue == "null";
         }
 
-        return matchesSearch && matchesBrand && matchesCategory && matchesSku && matchesUnit; // <--- CHANGE: Added matchesUnit
+        return matchesSearch && matchesBrand && matchesCategory && matchesSku && matchesUnit; 
       }).toList();
     });
   }
@@ -238,7 +234,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
     final bool hasSku = sku != "N/A";
     final String weightUnit = getWeightUnit(product['weight_unit_id']);
     final String cbmUnit = getCbmUnit(product['cbm_unit_id']);
-    final String unitName = _getUnitName(product['unit_of_measurement']); // <--- CHANGE: Get unit name for modal
+    final String unitName = _getUnitName(product['unit_of_measurement']); 
 
     showDialog(
       context: context,
@@ -255,7 +251,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
             children: [
               _detailRow("ID", prodId, isPrimary: true),
               _detailRow("SKU", sku),
-              _detailRow("Bundle Type", unitName), // <--- CHANGE: Display Unit Name
+              _detailRow("Bundle Type", unitName), 
               _detailRow("Barcode", getValue('barcode')),
               _detailRow("BC Type", getBarcodeType(product['barcode_type_id'])),
               const Divider(),
@@ -686,7 +682,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
 
     try {
       final response = await http.patch(
-        Uri.parse('http://192.168.0.143:8056/items/products/$id'),
+        Uri.parse('http://192.168.0.143:8091/items/products/$id'),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({'barcode': newBarcode}),
       );
@@ -737,7 +733,7 @@ Widget build(BuildContext context) {
         const SizedBox(width: 8),
       ],
       bottom: PreferredSize(
-        preferredSize: const Size.fromHeight(185), // <--- CHANGE: Height adjusted for 2x2 grid
+        preferredSize: const Size.fromHeight(185), 
         child: _buildFilterSection(),
       ),
     ),
@@ -794,7 +790,6 @@ Widget build(BuildContext context) {
             ),
           ),
           const SizedBox(height: 12),
-          // <--- CHANGE: 2x2 GRID LAYOUT START
           Row(
             children: [
               Expanded(
@@ -856,7 +851,6 @@ Widget build(BuildContext context) {
               ),
             ],
           ),
-          // <--- CHANGE: 2x2 GRID LAYOUT END
         ],
       ),
     );
@@ -893,6 +887,7 @@ Widget _buildSimpleDropdown({
   );
 }
 
+  // <--- CHANGE: Replaced standard dropdown with an InkWell that opens a bottom sheet modal
   Widget _buildDropdown({
     required String hint,
     required String? value,
@@ -901,35 +896,178 @@ Widget _buildSimpleDropdown({
     required String nameKey,
     required Function(String?) onChanged,
   }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.15),
-        borderRadius: BorderRadius.circular(8),
+    // Determine what text to display on the button
+    String displayValue = "All $hint";
+    if (value != null) {
+      final selectedItem = items.firstWhere(
+        (item) => item[idKey].toString() == value,
+        orElse: () => null,
+      );
+      if (selectedItem != null) {
+        displayValue = selectedItem[nameKey].toString();
+      }
+    }
+
+    return InkWell(
+      onTap: () => _showFilterModal(
+        context: context,
+        title: hint,
+        items: items,
+        idKey: idKey,
+        nameKey: nameKey,
+        currentValue: value,
+        onChanged: onChanged,
       ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: value,
-          hint: Text(
-            hint,
-            style: const TextStyle(color: Colors.white70, fontSize: 13),
-          ),
-          dropdownColor: Colors.blue.shade900,
-          iconEnabledColor: Colors.white,
-          isExpanded: true,
-          style: const TextStyle(color: Colors.white, fontSize: 13),
-          items: [
-            DropdownMenuItem(value: null, child: Text("All $hint")),
-            ...items.map(
-              (item) => DropdownMenuItem(
-                value: item[idKey].toString(),
-                child: Text(item[nameKey].toString()),
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Expanded(
+              child: Text(
+                displayValue,
+                style: TextStyle(
+                  color: value == null ? Colors.white70 : Colors.white, 
+                  fontSize: 13,
+                ),
+                overflow: TextOverflow.ellipsis,
               ),
             ),
+            const Icon(Icons.arrow_drop_down, color: Colors.white, size: 20),
           ],
-          onChanged: onChanged,
         ),
       ),
+    );
+  }
+
+  // <--- CHANGE: New method to display the Modal Bottom Sheet with a Search Bar
+  void _showFilterModal({
+    required BuildContext context,
+    required String title,
+    required List items,
+    required String idKey,
+    required String nameKey,
+    required String? currentValue,
+    required Function(String?) onChanged,
+  }) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (BuildContext context) {
+        String modalSearchQuery = "";
+        
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setModalState) {
+            // Filter the items based on the search bar input inside the modal
+            final filteredList = items.where((item) {
+              return item[nameKey]
+                  .toString()
+                  .toLowerCase()
+                  .contains(modalSearchQuery.toLowerCase());
+            }).toList();
+
+            // <--- FIXED: Using Container with a set height instead of FractionallySizedBox
+            return Container(
+              height: MediaQuery.of(context).size.height * 0.7, // 70% of screen height
+              child: Padding(
+                // Adjust padding for keyboard so search bar doesn't get covered
+                padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+                child: Column(
+                  children: [
+                    const SizedBox(height: 10),
+                    Container(
+                      width: 40, 
+                      height: 5, 
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300], 
+                        borderRadius: BorderRadius.circular(10)
+                      )
+                    ),
+                    const SizedBox(height: 15),
+                    Text(
+                      "Select $title", 
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: TextField(
+                        onChanged: (val) {
+                          setModalState(() {
+                            modalSearchQuery = val;
+                          });
+                        },
+                        decoration: InputDecoration(
+                          hintText: "Search $title...",
+                          prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                          filled: true,
+                          fillColor: Colors.grey.shade100,
+                          contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide.none,
+                          ),
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: ListView(
+                        children: [
+                          ListTile(
+                            title: Text(
+                              "All $title", 
+                              style: TextStyle(
+                                fontWeight: currentValue == null ? FontWeight.bold : FontWeight.normal,
+                                color: currentValue == null ? Colors.blue.shade900 : Colors.black87
+                              )
+                            ),
+                            trailing: currentValue == null ? Icon(Icons.check_circle, color: Colors.blue.shade900) : null,
+                            onTap: () {
+                              onChanged(null);
+                              Navigator.pop(context);
+                            },
+                          ),
+                          const Divider(height: 1),
+                          ...filteredList.map((item) {
+                            final bool isSelected = currentValue == item[idKey].toString();
+                            return Column(
+                              children: [
+                                ListTile(
+                                  title: Text(
+                                    item[nameKey].toString(), 
+                                    style: TextStyle(
+                                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                      color: isSelected ? Colors.blue.shade900 : Colors.black87
+                                    )
+                                  ),
+                                  trailing: isSelected ? Icon(Icons.check_circle, color: Colors.blue.shade900) : null,
+                                  onTap: () {
+                                    onChanged(item[idKey].toString());
+                                    Navigator.pop(context);
+                                  },
+                                ),
+                                const Divider(height: 1),
+                              ],
+                            );
+                          }).toList(),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -947,7 +1085,8 @@ Widget _buildSimpleDropdown({
                   searchQuery = "";
                   selectedBrandId = null;
                   selectedCategoryId = null;
-                  selectedUnitId = null; // <--- CHANGE: Clear unit filter
+                  selectedUnitId = null; 
+                  selectedSku = null;
                 });
                 _applyFilters();
               },
@@ -968,7 +1107,7 @@ Widget _buildSimpleDropdown({
             .trim()
             .isNotEmpty;
         final String pId = _getProductId(product).toString();
-        final String unitName = _getUnitName(product['unit_of_measurement']); // <--- CHANGE: Get unit for list display
+        final String unitName = _getUnitName(product['unit_of_measurement']); 
 
         return Card(
           elevation: 0,
@@ -994,7 +1133,6 @@ Widget _buildSimpleDropdown({
             subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // <--- CHANGE: Display Unit Name in list
                 Text(
                   "Unit: $unitName",
                   style: TextStyle(color: Colors.blue.shade700, fontSize: 12, fontWeight: FontWeight.bold),
