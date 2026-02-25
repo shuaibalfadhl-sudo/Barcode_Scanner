@@ -719,7 +719,7 @@ Widget build(BuildContext context) {
     endDrawer: _buildHistoryDrawer(),
     appBar: AppBar(
       title: const Text(
-        'Inventory Master',
+        'Product Barcoding',
         style: TextStyle(fontWeight: FontWeight.bold),
       ),
       backgroundColor: Colors.blue.shade900,
