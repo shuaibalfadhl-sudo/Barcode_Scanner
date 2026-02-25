@@ -108,6 +108,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
                 'is_synced': item['is_synced'] ?? true, 
                 'time': DateTime.tryParse(item['time'] ?? '') ?? DateTime.now(),
                 'original_data': item['original_data'],
+                'updated_data': item['updated_data'], // <--- CHANGE: Load updated payload history
               },
             )
             .toList();
@@ -242,12 +243,15 @@ class _ProductsScreenState extends State<ProductsScreen> {
     }
   }
 
-  // <--- CHANGE: Helper to FORCE UPDATE the local offline cache immediately when a barcode is created
-  Future<void> _updateLocalProductCache(String productId, String newBarcode) async {
+  // <--- CHANGE: Require FULL payload (Map) instead of just barcode string to update local cache
+  Future<void> _updateLocalProductCache(String productId, Map<String, dynamic> updatedData) async {
     // 1. Update the list actively in memory
     for (var p in allProducts) {
       if (_getProductId(p).toString() == productId) {
-        p['barcode'] = newBarcode;
+        // Merge ALL the updated properties into the local product (barcode, weight, cbm, etc)
+        updatedData.forEach((key, value) {
+          p[key] = value; 
+        });
         break;
       }
     }
@@ -256,7 +260,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('cached_products', json.encode(allProducts));
     
-    // 3. Re-filter the UI to show the new barcode immediately
+    // 3. Re-filter the UI to show the new data immediately
     if (mounted) {
       _applyFilters();
     }
@@ -302,12 +306,15 @@ class _ProductsScreenState extends State<ProductsScreen> {
       if (item['is_synced'] == false) {
         try {
           final productId = _getProductId(item['original_data']);
-          final barcode = item['barcode'];
+          
+          // <--- CHANGE: Use the FULL payload saved from the generator. 
+          // If none exists (legacy fallback), just use the barcode.
+          final payload = item['updated_data'] ?? {'barcode': item['barcode']};
           
           final response = await http.patch(
             Uri.parse('http://192.168.0.143:8091/items/products/$productId'),
             headers: {'Content-Type': 'application/json'},
-            body: json.encode({'barcode': barcode}),
+            body: json.encode(payload),
           ).timeout(const Duration(seconds: 5));
 
           if (response.statusCode == 200) {
@@ -324,8 +331,6 @@ class _ProductsScreenState extends State<ProductsScreen> {
 
     await _saveHistoryToDisk();
     
-    // <--- CHANGE: Force a Full Refresh. We temporarily clear the search query so the app 
-    // downloads the ENTIRE database of products from the server to refresh the local cache perfectly.
     String tempSearch = searchQuery;
     searchQuery = ""; 
     await _fetchProducts(); 
@@ -334,7 +339,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
     
     setState(() {
       _isSyncing = false;
-      _isOffline = failCount > 0; // If any failed, we assume network is still bad
+      _isOffline = failCount > 0; 
     });
 
     if (syncedCount > 0) {
@@ -461,6 +466,9 @@ class _ProductsScreenState extends State<ProductsScreen> {
                           if (genResult != null && genResult['saved'] == true) {
                             final String savedCode = genResult['barcode'].toString();
                             
+                            // <--- CHANGE: Safely grab the full payload (or fallback to barcode)
+                            final Map<String, dynamic> payload = genResult['updated_data'] ?? {'barcode': savedCode};
+
                             final bool isOfflineSave = _isOffline || (genResult['is_offline'] == true);
 
                             _showSuccessDialog(product['product_name'] ?? "Product", savedCode);
@@ -471,11 +479,11 @@ class _ProductsScreenState extends State<ProductsScreen> {
                               isScanned: true,
                               isRescan: effectiveAction == 'rescan',
                               isSynced: !isOfflineSave, 
+                              updatedData: payload, // <--- CHANGE: Save payload to history for syncing later
                             );
                             
-                            // <--- CHANGE: First, aggressively update the local memory so it updates INSTANTLY 
-                            await _updateLocalProductCache(prodId, savedCode);
-                            // Then attempt normal fetch to keep server in sync if we are online
+                            // <--- CHANGE: Update local memory with FULL payload
+                            await _updateLocalProductCache(prodId, payload);
                             _fetchProducts(); 
                           }
                         }
@@ -513,6 +521,9 @@ class _ProductsScreenState extends State<ProductsScreen> {
                         if (genResult != null && genResult['saved'] == true) {
                           final String savedCode = genResult['barcode'].toString();
                           
+                          // <--- CHANGE: Safely grab the full payload (or fallback to barcode)
+                          final Map<String, dynamic> payload = genResult['updated_data'] ?? {'barcode': savedCode};
+
                           final bool isOfflineSave = _isOffline || (genResult['is_offline'] == true);
 
                           _showSuccessDialog(product['product_name'] ?? "Product", savedCode);
@@ -523,11 +534,11 @@ class _ProductsScreenState extends State<ProductsScreen> {
                             isGenerated: effectiveAction == 'generate',
                             isRegenerated: effectiveAction == 'regenerate',
                             isSynced: !isOfflineSave, 
+                            updatedData: payload, // <--- CHANGE: Save payload to history for syncing later
                           );
                           
-                          // <--- CHANGE: First, aggressively update the local memory so it updates INSTANTLY
-                          await _updateLocalProductCache(prodId, savedCode);
-                          // Then attempt normal fetch to keep server in sync if we are online
+                          // <--- CHANGE: Update local memory with FULL payload
+                          await _updateLocalProductCache(prodId, payload);
                           _fetchProducts(); 
                         }
                       } : null,
@@ -737,6 +748,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
     bool isGenerated = false,
     bool isRegenerated = false,
     bool isSynced = true, 
+    Map<String, dynamic>? updatedData, // <--- CHANGE: Added property to hold the payload
   }) {
     setState(() {
       recentScans.insert(0, {
@@ -749,6 +761,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
         'is_regenerated': isRegenerated,
         'is_synced': isSynced, 
         'original_data': product,
+        'updated_data': updatedData, // <--- CHANGE: Save payload to history
       });
     });
     _saveHistoryToDisk();
