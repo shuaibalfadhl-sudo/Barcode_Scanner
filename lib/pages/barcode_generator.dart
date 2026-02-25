@@ -43,7 +43,6 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
 
   final Map<String, String> _dimUnits = {'0': 'N/A', '1': 'MM', '2': 'CM', '3': 'M', '4': 'IN', '5': 'FT'};
 
-  // Helper to prevent "null" strings breaking text controllers
   String _cleanString(dynamic val) {
     if (val == null || val.toString() == "null" || val.toString().trim().isEmpty) {
       return "";
@@ -63,7 +62,7 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
       _selectedBarcodeType = widget.scannedBarcodeTypeId.toString();
     } else if (widget.scannedBarcode != null) {
       final barcodeValue = widget.scannedBarcode!.trim();
-      if (barcodeValue.length == 13 && RegExp(r'^[0-9]+$').hasMatch(barcodeValue)) {
+      if ((barcodeValue.length == 12 || barcodeValue.length == 13) && RegExp(r'^[0-9]+$').hasMatch(barcodeValue)) {
         _selectedBarcodeType = '1'; 
       } else {
         _selectedBarcodeType = '2'; 
@@ -84,7 +83,6 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
       _heightController.text = _cleanString(widget.product['cbm_height']);
     }
     
-    // Add listeners to trigger validation UI updates
     _valueController.addListener(() => setState(() {}));
     _weightController.addListener(() => setState(() {}));
     _lengthController.addListener(() => setState(() {}));
@@ -157,11 +155,33 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
     } catch (_) {}
   }
 
-  // <--- CHANGED: STRICT VALIDATION LOGIC START --->
-  
+  // <--- CHANGED: BARCODE TYPE VALIDATOR START --->
+
+  String? get _barcodeError {
+    final val = _valueController.text.trim();
+    if (val.isEmpty) return "Barcode is required";
+    
+    // Validate EAN-13
+    if (_selectedBarcodeType == '1') {
+      if (val.length < 12 || val.length > 13) {
+        return "EAN-13 must be 12 or 13 digits";
+      }
+      if (!RegExp(r'^[0-9]+$').hasMatch(val)) {
+        return "EAN-13 must be numbers only";
+      }
+    }
+    
+    // Validate Code 128 (Optional constraints, usually any string works)
+    if (_selectedBarcodeType == '2' && val.length < 3) {
+      return "Code 128 is too short";
+    }
+
+    return null; // No errors
+  }
+
+  // <--- CHANGED: BARCODE TYPE VALIDATOR END --->
+
   String? get _weightError {
-    // Show error only if they started typing something invalid, 
-    // or if the field is empty but we require it (it's always required now)
     if (_weightController.text.isEmpty) return "Required";
     final val = double.tryParse(_weightController.text);
     if (val == null) return "Invalid";
@@ -183,13 +203,13 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
   }
 
   bool get _isFormValid {
-    // 1. Basic Barcode Rules
-    if (_selectedBarcodeType == '0' || _valueController.text.trim().isEmpty) return false;
+    // 1. Basic Barcode Rules (MUST not have barcode errors)
+    if (_selectedBarcodeType == '0' || _barcodeError != null) return false;
     
-    // 2. Weight Rules (MUST be filled and have a unit)
+    // 2. Weight Rules 
     if (_weightController.text.isEmpty || _weightError != null || _selectedWeightUnit == '0') return false;
     
-    // 3. CBM Rules (If checked, ALL dims and the unit must be valid)
+    // 3. CBM Rules 
     if (_isCbmChecked) {
       if (_selectedDimUnit == '0') return false;
       if (_lengthController.text.isEmpty || _getDimError(_lengthController) != null) return false;
@@ -199,8 +219,6 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
     
     return true;
   }
-  
-  // <--- CHANGED: STRICT VALIDATION LOGIC END --->
 
   Future<void> _saveProduct() async {
     setState(() => _isSaving = true);
@@ -277,23 +295,28 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
                   ),
                   const SizedBox(height: 16),
                   Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Expanded(
                         child: TextField(
                           controller: _valueController, 
-                          decoration: _inputDecoration("Barcode Value", Icons.edit_note)
+                          // <--- CHANGED: Passed _barcodeError to display the red warning text
+                          decoration: _inputDecoration("Barcode Value", Icons.edit_note, error: _barcodeError) 
                         ),
                       ),
                       const SizedBox(width: 8),
-                      ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color.fromARGB(255, 255, 0, 128),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      SizedBox(
+                        height: 48, // Ensures button height matches input field before errors
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color.fromARGB(255, 255, 0, 128),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                          onPressed: _selectedBarcodeType == '0' ? null : _generateUniqueBarcode,
+                          child: const Icon(Icons.auto_fix_high),
                         ),
-                        onPressed: _selectedBarcodeType == '0' ? null : _generateUniqueBarcode,
-                        child: const Icon(Icons.auto_fix_high),
                       ),
                     ],
                   ),
@@ -349,7 +372,6 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
                             decoration: InputDecoration(
                               isDense: true, 
                               labelText: "Unit",
-                              // Add red border/error text if CBM is checked but no unit is selected
                               errorText: _selectedDimUnit == '0' ? "Req" : null,
                             ),
                             items: _dimUnits.entries.map((e) => DropdownMenuItem(value: e.key, child: Text(e.value))).toList(),
@@ -422,7 +444,8 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
         width: double.infinity, padding: const EdgeInsets.all(24),
         decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.blue.shade100)),
         child: Column(children: [
-          if (_valueController.text.isNotEmpty && _selectedBarcodeType != '0')
+          // <--- CHANGED: The Live Preview will only render if there are NO errors
+          if (_valueController.text.isNotEmpty && _selectedBarcodeType != '0' && _barcodeError == null)
             BarcodeWidget(
               barcode: _selectedBarcodeType == '1' ? Barcode.ean13() : Barcode.code128(), 
               data: _valueController.text, 
@@ -431,7 +454,11 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
               drawText: true, 
               style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.bold)
             )
-          else const Text("Waiting for valid data...", style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic)),
+          else 
+            Text(
+              _barcodeError ?? "Waiting for valid data...", 
+              style: TextStyle(color: _barcodeError != null ? Colors.red : Colors.grey, fontStyle: FontStyle.italic)
+            ),
         ]),
       ),
     ]);
@@ -447,7 +474,8 @@ class _BarcodeGeneratorScreenState extends State<BarcodeGeneratorScreen> {
   }
 
   Future<void> _printBarcode() async {
-    if (_valueController.text.isEmpty || _selectedBarcodeType == '0') return;
+    // Prevent printing if barcode is invalid
+    if (_valueController.text.isEmpty || _selectedBarcodeType == '0' || _barcodeError != null) return;
 
     final bool? withDetails = await showModalBottomSheet<bool>(
       context: context,
