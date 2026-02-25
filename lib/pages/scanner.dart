@@ -15,7 +15,7 @@ class CameraScannerPage extends StatefulWidget {
 class _CameraScannerPageState extends State<CameraScannerPage> {
   // Controller set to detect common 1D formats but ignore 2D (QR/DataMatrix)
   final MobileScannerController controller = MobileScannerController(
-    formats: [BarcodeFormat.ean13, BarcodeFormat.code128, BarcodeFormat.ean8],
+    formats: [BarcodeFormat.ean13, BarcodeFormat.code128, BarcodeFormat.ean8, BarcodeFormat.itf,],
     detectionSpeed: DetectionSpeed.normal,
   );
 

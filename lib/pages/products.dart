@@ -1,3 +1,4 @@
+import 'dart:async'; // <--- CHANGE: Added this import for the Timer (Debounce)
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -32,6 +33,9 @@ class _ProductsScreenState extends State<ProductsScreen> {
   String? selectedCategoryId;
   String? selectedUnitId; 
 
+  // <--- CHANGE: Timer for Debouncing API calls
+  Timer? _debounce; 
+
   // Scroll Management
   final ScrollController _scrollController = ScrollController();
   bool _showBackToTop = false;
@@ -50,6 +54,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
   void dispose() {
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
+    _debounce?.cancel(); // <--- CHANGE: Cancel the timer if the screen is closed
     super.dispose();
   }
 
@@ -133,23 +138,36 @@ class _ProductsScreenState extends State<ProductsScreen> {
     }
   }
 
+  // <--- CHANGE: Modified _fetchProducts to include Server-Side Search
   Future<void> _fetchProducts() async {
-    final response = await http.get(
-      Uri.parse('http://192.168.0.143:8091/items/products'),
-    );
-    if (response.statusCode == 200) {
-      List data = json.decode(response.body)['data'];
-      data.sort((a, b) {
-        final bool hasA = (a['barcode'] ?? "").toString().trim().isNotEmpty;
-        final bool hasB = (b['barcode'] ?? "").toString().trim().isNotEmpty;
-        if (!hasA && hasB) return -1;
-        if (hasA && !hasB) return 1;
-        return (a['product_name'] ?? "").toString().toLowerCase().compareTo(
-          (b['product_name'] ?? "").toString().toLowerCase(),
-        );
-      });
-      allProducts = data;
-      _applyFilters();
+    setState(() => isLoading = true); // Show loading indicator when searching
+    try {
+      // Build the URL with the search query if it exists
+      String url = 'http://192.168.0.143:8091/items/products';
+      if (searchQuery.isNotEmpty) {
+        url += '?search=${Uri.encodeComponent(searchQuery)}';
+      }
+
+      final response = await http.get(Uri.parse(url));
+      
+      if (response.statusCode == 200) {
+        List data = json.decode(response.body)['data'];
+        data.sort((a, b) {
+          final bool hasA = (a['barcode'] ?? "").toString().trim().isNotEmpty;
+          final bool hasB = (b['barcode'] ?? "").toString().trim().isNotEmpty;
+          if (!hasA && hasB) return -1;
+          if (hasA && !hasB) return 1;
+          return (a['product_name'] ?? "").toString().toLowerCase().compareTo(
+            (b['product_name'] ?? "").toString().toLowerCase(),
+          );
+        });
+        allProducts = data;
+        _applyFilters();
+      }
+    } catch (e) {
+      debugPrint("Error fetching products: $e");
+    } finally {
+      if (mounted) setState(() => isLoading = false);
     }
   }
 
@@ -172,12 +190,9 @@ class _ProductsScreenState extends State<ProductsScreen> {
   void _applyFilters() {
     setState(() {
       filteredProducts = allProducts.where((p) {
-        final query = searchQuery.toLowerCase();
-        final name = (p['product_name'] ?? "").toString().toLowerCase();
-        final pId = _getProductId(p).toString().toLowerCase();
         final skuValue = (p['product_code'] ?? "").toString();
 
-        final matchesSearch = name.contains(query) || pId.contains(query) || skuValue.toLowerCase().contains(query);
+        // <--- CHANGE: Removed local text searching logic since the server is doing it now.
 
         final String pBrand = (p['product_brand'] ?? "").toString();
         final bool matchesBrand = selectedBrandId == null || pBrand == selectedBrandId;
@@ -196,7 +211,8 @@ class _ProductsScreenState extends State<ProductsScreen> {
           matchesSku = skuValue.trim().isEmpty || skuValue == "null";
         }
 
-        return matchesSearch && matchesBrand && matchesCategory && matchesSku && matchesUnit; 
+        // <--- CHANGE: matchesSearch removed from return
+        return matchesBrand && matchesCategory && matchesSku && matchesUnit; 
       }).toList();
     });
   }
@@ -773,9 +789,13 @@ Widget build(BuildContext context) {
       child: Column(
         children: [
           TextField(
+            // <--- CHANGE: Implementing Debounce on the Search Input
             onChanged: (val) {
               searchQuery = val;
-              _applyFilters();
+              if (_debounce?.isActive ?? false) _debounce!.cancel();
+              _debounce = Timer(const Duration(milliseconds: 500), () {
+                _fetchProducts(); // Calls the API with the search parameter
+              });
             },
             decoration: InputDecoration(
               hintText: "Search name, ID, or SKU...",
@@ -887,7 +907,6 @@ Widget _buildSimpleDropdown({
   );
 }
 
-  // <--- CHANGE: Replaced standard dropdown with an InkWell that opens a bottom sheet modal
   Widget _buildDropdown({
     required String hint,
     required String? value,
@@ -945,7 +964,6 @@ Widget _buildSimpleDropdown({
     );
   }
 
-  // <--- CHANGE: New method to display the Modal Bottom Sheet with a Search Bar
   void _showFilterModal({
     required BuildContext context,
     required String title,
@@ -967,7 +985,6 @@ Widget _buildSimpleDropdown({
         
         return StatefulBuilder(
           builder: (BuildContext context, StateSetter setModalState) {
-            // Filter the items based on the search bar input inside the modal
             final filteredList = items.where((item) {
               return item[nameKey]
                   .toString()
@@ -975,11 +992,9 @@ Widget _buildSimpleDropdown({
                   .contains(modalSearchQuery.toLowerCase());
             }).toList();
 
-            // <--- FIXED: Using Container with a set height instead of FractionallySizedBox
             return Container(
-              height: MediaQuery.of(context).size.height * 0.7, // 70% of screen height
+              height: MediaQuery.of(context).size.height * 0.7, 
               child: Padding(
-                // Adjust padding for keyboard so search bar doesn't get covered
                 padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
                 child: Column(
                   children: [
@@ -1088,7 +1103,7 @@ Widget _buildSimpleDropdown({
                   selectedUnitId = null; 
                   selectedSku = null;
                 });
-                _applyFilters();
+                _fetchProducts(); // <--- CHANGE: Ensure reset re-fetches products without the search param
               },
               child: const Text("Reset Filters"),
             ),
