@@ -24,7 +24,7 @@ class _LoginPageState extends State<LoginPage> {
   
   bool _isLoading = false;
   bool _obscurePassword = true;
-  bool _rememberMe = false; // New state variable
+  bool _rememberMe = false; 
   String? _errorMessage;
 
   @override
@@ -70,6 +70,7 @@ class _LoginPageState extends State<LoginPage> {
 
     final prefs = await SharedPreferences.getInstance();
     
+    // --- LOCKOUT CHECK ---
     String? lockoutStr = prefs.getString('lockout_time_$email');
     if (lockoutStr != null) {
       final lockoutTime = DateTime.parse(lockoutStr);
@@ -86,47 +87,85 @@ class _LoginPageState extends State<LoginPage> {
 
     setState(() => _isLoading = true);
 
+    // <--- CHANGE: Setup variable to hold users list (online or offline)
+    List users = [];
+    bool isOfflineMode = false;
+
     try {
-      final response = await http.get(Uri.parse('http://192.168.0.143:8091/items/user'));
+      // <--- CHANGE: Added a timeout so the app doesn't hang forever if there's no internet
+      final response = await http.get(
+        Uri.parse('http://192.168.0.143:8091/items/user')
+      ).timeout(const Duration(seconds: 5));
 
       if (response.statusCode == 200) {
-        final List users = json.decode(response.body)['data'];
+        users = json.decode(response.body)['data'];
         
-        final user = users.cast<Map<String, dynamic>?>().firstWhere(
-          (u) => u?['user_email'] == email,
-          orElse: () => null,
-        );
-
-        if (user == null) {
-          setState(() => _errorMessage = "Account not found.");
-        } else if (user['user_password'] == password) {
-          // Success! 
-          await _handleRememberMe(); // Save credentials if checked
-          await prefs.remove('failed_attempts_$email');
-          await prefs.remove('lockout_time_$email');
-          
-          if (!mounted) return;
-          
-          Navigator.pushReplacement(
-            context, 
-            MaterialPageRoute(builder: (context) => const ProductsScreen())
-          );
-        } else {
-          int attempts = (prefs.getInt('failed_attempts_$email') ?? 0) + 1;
-          await prefs.setInt('failed_attempts_$email', attempts);
-
-          if (attempts >= 3) {
-            await prefs.setString('lockout_time_$email', DateTime.now().toIso8601String());
-            setState(() => _errorMessage = "3 failed attempts. Account Locked.");
-          } else {
-            setState(() => _errorMessage = "Invalid password. Attempt $attempts/3");
-          }
-        }
+        // <--- CHANGE: Cache the user list locally for future offline logins
+        await prefs.setString('cached_users_list', json.encode(users));
       } else {
-        setState(() => _errorMessage = "Server error: ${response.statusCode}");
+        throw Exception("Server error: ${response.statusCode}");
       }
     } catch (e) {
-      setState(() => _errorMessage = "Connection error. Is your API running?");
+      // <--- CHANGE: Offline Fallback Logic
+      debugPrint("Network failed, attempting offline login. Error: $e");
+      isOfflineMode = true;
+      
+      final cachedUsersString = prefs.getString('cached_users_list');
+      if (cachedUsersString != null) {
+        users = json.decode(cachedUsersString);
+      } else {
+        setState(() {
+          _isLoading = false;
+          _errorMessage = "You are offline and no user data is cached. Please connect to internet for first login.";
+        });
+        return;
+      }
+    }
+
+    // --- AUTHENTICATION LOGIC (Works identically for online and offline) ---
+    try {
+      final user = users.cast<Map<String, dynamic>?>().firstWhere(
+        (u) => u?['user_email'] == email,
+        orElse: () => null,
+      );
+
+      if (user == null) {
+        setState(() => _errorMessage = "Account not found.");
+      } else if (user['user_password'] == password) {
+        // Success! 
+        await _handleRememberMe(); 
+        await prefs.remove('failed_attempts_$email');
+        await prefs.remove('lockout_time_$email');
+        
+        if (!mounted) return;
+
+        // <--- CHANGE: Optional UX - Let the user know they logged in offline
+        if (isOfflineMode) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Logged in using Offline Mode"),
+              backgroundColor: Colors.orange,
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+        
+        Navigator.pushReplacement(
+          context, 
+          MaterialPageRoute(builder: (context) => const ProductsScreen())
+        );
+      } else {
+        // Failed attempt logic
+        int attempts = (prefs.getInt('failed_attempts_$email') ?? 0) + 1;
+        await prefs.setInt('failed_attempts_$email', attempts);
+
+        if (attempts >= 3) {
+          await prefs.setString('lockout_time_$email', DateTime.now().toIso8601String());
+          setState(() => _errorMessage = "3 failed attempts. Account Locked.");
+        } else {
+          setState(() => _errorMessage = "Invalid password. Attempt $attempts/3");
+        }
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
