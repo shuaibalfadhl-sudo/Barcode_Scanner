@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import 'scanner.dart';
 import 'barcode_generator.dart';
 import 'print.dart';
+import '../widgets/drawer.dart';
 
 class ProductsScreen extends StatefulWidget {
   const ProductsScreen({super.key});
@@ -22,6 +23,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
   List brands = [];
   List categories = [];
   List units = []; 
+  List<dynamic> users = []; // <-- fetch users for display names
   List<Map<String, dynamic>> recentScans = [];
   String? selectedSku;
   List<String> skuList = [];
@@ -126,11 +128,44 @@ class _ProductsScreenState extends State<ProductsScreen> {
         _fetchBrands(),
         _fetchCategories(),
         _fetchUnits(),
+        _fetchUsers(),
       ]);
     } catch (e) {
       _showSnackBar('Init Error: $e');
     } finally {
       if (mounted) setState(() => isLoading = false);
+    }
+  }
+
+  Future<void> _fetchUsers() async {
+    final prefs = await SharedPreferences.getInstance();
+    try {
+      final res = await http.get(Uri.parse('http://192.168.0.143:8091/items/user')).timeout(const Duration(seconds: 10));
+      if (res.statusCode == 200) {
+        final data = json.decode(res.body)['data'];
+        await prefs.setString('cached_users', json.encode(data));
+        if (mounted) setState(() => users = data);
+      }
+    } catch (_) {
+      final cached = prefs.getString('cached_users');
+      if (cached != null && mounted) setState(() => users = json.decode(cached));
+    }
+  }
+
+  String _getUserNameById(dynamic userId) {
+    if (userId == null) return 'Unknown User';
+    try {
+      final u = users.firstWhere((u) => u['user_id'].toString() == userId.toString(), orElse: () => null);
+      if (u != null) {
+        final String fname = (u['user_fname'] ?? '').toString();
+        final String lname = (u['user_lname'] ?? '').toString();
+        final String full = ('$fname $lname').trim();
+        if (full.isNotEmpty) return full;
+        return (u['user_fname'] ?? u['user_name'] ?? 'Unknown User').toString();
+      }
+      return 'Unknown User';
+    } catch (e) {
+      return 'Unknown User';
     }
   }
 
@@ -310,12 +345,26 @@ class _ProductsScreenState extends State<ProductsScreen> {
           // <--- CHANGE: Use the FULL payload saved from the generator. 
           // If none exists (legacy fallback), just use the barcode.
           final payload = item['updated_data'] ?? {'barcode': item['barcode']};
-          
+
+          // Sanitize payload: remove any name fields that the server rejects
+          final sanitized = Map<String, dynamic>.from(payload);
+          sanitized.remove('updated_by_name');
+          sanitized.remove('updated_by_fname');
+          sanitized.remove('updated_by_lname');
+          sanitized['updated_at'] = DateTime.now().toIso8601String();
+
           final response = await http.patch(
             Uri.parse('http://192.168.0.143:8091/items/products/$productId'),
             headers: {'Content-Type': 'application/json'},
-            body: json.encode(payload),
+            body: json.encode(sanitized),
           ).timeout(const Duration(seconds: 5));
+
+          // Debug logging to help diagnose 403 responses
+          debugPrint('PATCH ${Uri.parse('http://192.168.0.143:8091/items/products/$productId')}');
+          debugPrint('Request headers: ${{'Content-Type': 'application/json'}}');
+          debugPrint('Request body: ${json.encode(sanitized)}');
+          debugPrint('Response status: ${response.statusCode}');
+          debugPrint('Response body: ${response.body}');
 
           if (response.statusCode == 200) {
             item['is_synced'] = true; // Mark as synced!
@@ -413,6 +462,58 @@ class _ProductsScreenState extends State<ProductsScreen> {
               _detailRow("Length", "${getValue('cbm_length')} $cbmUnit"),
               _detailRow("Width", "${getValue('cbm_width')} $cbmUnit"),
               _detailRow("Height", "${getValue('cbm_height')} $cbmUnit"),
+              // --- SHOW UPDATED BY INFO WHEN AVAILABLE ---
+              Builder(builder: (_) {
+                String updatedByDisplay = '';
+                String updatedAt = '';
+
+                if (history != null) {
+                  final hd = history['updated_data'] ?? history;
+                  if (hd is Map) {
+                    if ((hd['updated_by_name'] ?? '').toString().trim().isNotEmpty) {
+                      updatedByDisplay = hd['updated_by_name'].toString();
+                    } else if (hd['updated_by'] != null) {
+                      updatedByDisplay = _getUserNameById(hd['updated_by']);
+                    }
+                  } else {
+                    if ((history['updated_by_name'] ?? '').toString().trim().isNotEmpty) {
+                      updatedByDisplay = history['updated_by_name'].toString();
+                    } else if (history['original_data'] is Map && history['original_data']['updated_by'] != null) {
+                      updatedByDisplay = _getUserNameById(history['original_data']['updated_by']);
+                    }
+                  }
+
+                  final dynamic rawTime = history['time'] ?? history['timestamp'];
+                  final DateTime time = rawTime is String ? (DateTime.tryParse(rawTime) ?? DateTime.now()) : (rawTime ?? DateTime.now());
+                  updatedAt = DateFormat('MMM dd, yyyy • hh:mm a').format(time);
+                } else {
+                  // Fallback to product-level metadata
+                  if ((product['updated_by_name'] ?? '').toString().trim().isNotEmpty) {
+                    updatedByDisplay = product['updated_by_name'].toString();
+                  } else if (product['updated_by'] != null) {
+                    updatedByDisplay = _getUserNameById(product['updated_by']);
+                  }
+                  if (product['updated_at'] != null) {
+                    try {
+                      final DateTime t = product['updated_at'] is String ? DateTime.parse(product['updated_at']) : product['updated_at'];
+                      updatedAt = DateFormat('MMM dd, yyyy • hh:mm a').format(t);
+                    } catch (_) {}
+                  }
+                }
+
+                if (updatedByDisplay.isNotEmpty) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SizedBox(height: 8),
+                      _detailRow('Updated By', updatedByDisplay),
+                      if (updatedAt.isNotEmpty) _detailRow('Updated At', updatedAt),
+                    ],
+                  );
+                }
+
+                return const SizedBox.shrink();
+              }),
               if (!hasSku)
                 const Padding(
                   padding: EdgeInsets.only(top: 10),
@@ -762,6 +863,19 @@ class _ProductsScreenState extends State<ProductsScreen> {
         'is_synced': isSynced, 
         'original_data': product,
         'updated_data': updatedData, // <--- CHANGE: Save payload to history
+        // Promote updater info for easier display
+        'updated_by': updatedData != null && updatedData['updated_by'] != null
+            ? updatedData['updated_by']
+            : (product['updated_by'] ?? null),
+        'updated_by_name': updatedData != null && (updatedData['updated_by_name'] ?? '').toString().isNotEmpty
+            ? updatedData['updated_by_name']
+            : (product['updated_by_name'] ?? null),
+        'updated_by_fname': updatedData != null && (updatedData['updated_by_fname'] ?? '').toString().isNotEmpty
+            ? updatedData['updated_by_fname']
+            : (product['updated_by_fname'] ?? null),
+        'updated_by_lname': updatedData != null && (updatedData['updated_by_lname'] ?? '').toString().isNotEmpty
+            ? updatedData['updated_by_lname']
+            : (product['updated_by_lname'] ?? null),
       });
     });
     _saveHistoryToDisk();
@@ -774,6 +888,7 @@ Widget build(BuildContext context) {
   return Scaffold(
     key: _scaffoldKey,
     backgroundColor: const Color(0xFFF4F7F9),
+    drawer: const AppDrawer(currentPage: 'Products'),
     endDrawer: _buildHistoryDrawer(),
     appBar: AppBar(
       title: const Text(
@@ -1413,6 +1528,26 @@ Widget _buildSimpleDropdown({
                                 color: Colors.grey,
                               ),
                             ),
+                            const SizedBox(height: 4),
+                            // Show user who performed the action when available
+                            Builder(builder: (_) {
+                              String userDisplay = 'Unknown User';
+                              // Prefer explicit name fields on the history item
+                              if ((item['updated_by_name'] ?? '') .toString().trim().isNotEmpty) {
+                                userDisplay = item['updated_by_name'].toString();
+                              } else if (item['updated_data'] is Map && (item['updated_data']['updated_by_name'] ?? '').toString().trim().isNotEmpty) {
+                                userDisplay = item['updated_data']['updated_by_name'].toString();
+                              } else if (item['updated_data'] is Map && item['updated_data']['updated_by'] != null) {
+                                userDisplay = _getUserNameById(item['updated_data']['updated_by']);
+                              } else if (item['original_data'] is Map && item['original_data']['updated_by'] != null) {
+                                userDisplay = _getUserNameById(item['original_data']['updated_by']);
+                              }
+
+                              return Text(
+                                "By: $userDisplay",
+                                style: const TextStyle(fontSize: 11, color: Colors.blue, fontWeight: FontWeight.w500),
+                              );
+                            }),
                           ],
                         ),
                         onTap: () {

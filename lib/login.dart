@@ -2,14 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'products.dart'; 
-
-void main() {
-  runApp(const MaterialApp(
-    home: LoginPage(),
-    debugShowCheckedModeBanner: false,
-  ));
-}
+import 'index.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -21,10 +14,10 @@ class LoginPage extends StatefulWidget {
 class _LoginPageState extends State<LoginPage> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
-  
+
   bool _isLoading = false;
   bool _obscurePassword = true;
-  bool _rememberMe = false; 
+  bool _rememberMe = false;
   String? _errorMessage;
 
   @override
@@ -69,7 +62,7 @@ class _LoginPageState extends State<LoginPage> {
     }
 
     final prefs = await SharedPreferences.getInstance();
-    
+
     // --- LOCKOUT CHECK ---
     String? lockoutStr = prefs.getString('lockout_time_$email');
     if (lockoutStr != null) {
@@ -87,29 +80,23 @@ class _LoginPageState extends State<LoginPage> {
 
     setState(() => _isLoading = true);
 
-    // <--- CHANGE: Setup variable to hold users list (online or offline)
     List users = [];
     bool isOfflineMode = false;
 
     try {
-      // <--- CHANGE: Added a timeout so the app doesn't hang forever if there's no internet
-      final response = await http.get(
-        Uri.parse('http://192.168.0.143:8091/items/user')
-      ).timeout(const Duration(seconds: 5));
+      final response = await http.get(Uri.parse('http://192.168.0.143:8091/items/user')).timeout(const Duration(seconds: 5));
 
       if (response.statusCode == 200) {
         users = json.decode(response.body)['data'];
-        
-        // <--- CHANGE: Cache the user list locally for future offline logins
+
         await prefs.setString('cached_users_list', json.encode(users));
       } else {
         throw Exception("Server error: ${response.statusCode}");
       }
     } catch (e) {
-      // <--- CHANGE: Offline Fallback Logic
       debugPrint("Network failed, attempting offline login. Error: $e");
       isOfflineMode = true;
-      
+
       final cachedUsersString = prefs.getString('cached_users_list');
       if (cachedUsersString != null) {
         users = json.decode(cachedUsersString);
@@ -122,38 +109,35 @@ class _LoginPageState extends State<LoginPage> {
       }
     }
 
-    // --- AUTHENTICATION LOGIC (Works identically for online and offline) ---
+    // --- AUTHENTICATION LOGIC ---
     try {
-      final user = users.cast<Map<String, dynamic>?>().firstWhere(
-        (u) => u?['user_email'] == email,
-        orElse: () => null,
-      );
+      final user = users.cast<Map<String, dynamic>?>().firstWhere((u) => u?['user_email'] == email, orElse: () => null);
 
       if (user == null) {
         setState(() => _errorMessage = "Account not found.");
       } else if (user['user_password'] == password) {
-        // Success! 
-        await _handleRememberMe(); 
+        // Success!
+        await _handleRememberMe();
         await prefs.remove('failed_attempts_$email');
         await prefs.remove('lockout_time_$email');
+
+        // --- SAVE LOGGED-IN USER DATA ---
+        await prefs.setString('logged_in_user', json.encode(user));
+        await prefs.setInt('logged_in_user_id', user['user_id'] ?? 0);
         
+        // UPDATED: Now saving both first and last name
+        await prefs.setString('logged_in_user_fname', user['user_fname'] ?? '');
+        await prefs.setString('logged_in_user_lname', user['user_lname'] ?? '');
+
         if (!mounted) return;
 
-        // <--- CHANGE: Optional UX - Let the user know they logged in offline
         if (isOfflineMode) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text("Logged in using Offline Mode"),
-              backgroundColor: Colors.orange,
-              duration: Duration(seconds: 2),
-            ),
-          );
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Logged in using Offline Mode"), backgroundColor: Colors.orange, duration: Duration(seconds: 2)));
         }
-        
-        Navigator.pushReplacement(
-          context, 
-          MaterialPageRoute(builder: (context) => const ProductsScreen())
-        );
+
+        // --- FIXED ROUTING ---
+        // This now correctly points to the ManagementHubScreen from index.dart
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const ManagementHubScreen()));
       } else {
         // Failed attempt logic
         int attempts = (prefs.getInt('failed_attempts_$email') ?? 0) + 1;
@@ -178,11 +162,7 @@ class _LoginPageState extends State<LoginPage> {
         children: [
           Container(
             decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFF1A237E), Color(0xFF1976D2), Color(0xFF64B5F6)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
+              gradient: LinearGradient(colors: [Color(0xFF1A237E), Color(0xFF1976D2), Color(0xFF64B5F6)], begin: Alignment.topLeft, end: Alignment.bottomRight),
             ),
           ),
           Center(
@@ -193,33 +173,20 @@ class _LoginPageState extends State<LoginPage> {
                 decoration: BoxDecoration(
                   color: Colors.white.withOpacity(0.95),
                   borderRadius: BorderRadius.circular(30),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.2),
-                      blurRadius: 20,
-                      offset: const Offset(0, 10),
-                    )
-                  ],
+                  boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 20, offset: const Offset(0, 10))],
                 ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Container(
                       padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.blue.shade50,
-                        shape: BoxShape.circle,
-                      ),
+                      decoration: BoxDecoration(color: Colors.blue.shade50, shape: BoxShape.circle),
                       child: Icon(Icons.barcode_reader, size: 50, color: Colors.blue.shade900),
                     ),
                     const SizedBox(height: 20),
                     Text(
                       "Products Barcoding",
-                      style: TextStyle(
-                        fontSize: 26,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.blue.shade900,
-                      ),
+                      style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.blue.shade900),
                     ),
                     const SizedBox(height: 30),
                     if (_errorMessage != null)
@@ -234,12 +201,7 @@ class _LoginPageState extends State<LoginPage> {
                         child: Text(_errorMessage!, style: const TextStyle(color: Colors.red)),
                       ),
 
-                    _buildTextField(
-                      controller: _emailController,
-                      label: "Email Address",
-                      icon: Icons.email_outlined,
-                      type: TextInputType.emailAddress,
-                    ),
+                    _buildTextField(controller: _emailController, label: "Email Address", icon: Icons.email_outlined, type: TextInputType.emailAddress),
                     const SizedBox(height: 20),
                     _buildTextField(
                       controller: _passwordController,
@@ -249,8 +211,7 @@ class _LoginPageState extends State<LoginPage> {
                       obscure: _obscurePassword,
                       onToggle: () => setState(() => _obscurePassword = !_obscurePassword),
                     ),
-                    
-                    // --- REMEMBER ME CHECKBOX ---
+
                     Row(
                       children: [
                         Checkbox(
@@ -275,9 +236,7 @@ class _LoginPageState extends State<LoginPage> {
                           foregroundColor: Colors.white,
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
                         ),
-                        child: _isLoading 
-                          ? const CircularProgressIndicator(color: Colors.white)
-                          : const Text('SIGN IN', style: TextStyle(fontWeight: FontWeight.bold)),
+                        child: _isLoading ? const CircularProgressIndicator(color: Colors.white) : const Text('SIGN IN', style: TextStyle(fontWeight: FontWeight.bold)),
                       ),
                     ),
                   ],
@@ -306,12 +265,7 @@ class _LoginPageState extends State<LoginPage> {
       decoration: InputDecoration(
         labelText: label,
         prefixIcon: Icon(icon, color: Colors.blue.shade700),
-        suffixIcon: isPassword 
-          ? IconButton(
-              icon: Icon(obscure ? Icons.visibility : Icons.visibility_off),
-              onPressed: onToggle,
-            ) 
-          : null,
+        suffixIcon: isPassword ? IconButton(icon: Icon(obscure ? Icons.visibility : Icons.visibility_off), onPressed: onToggle) : null,
         filled: true,
         fillColor: Colors.grey.shade50,
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
